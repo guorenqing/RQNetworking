@@ -1,0 +1,6 @@
+framework module Pods_RQNetworking_Tests {
+  umbrella header "Pods-RQNetworking_Tests-umbrella.h"
+
+  export *
+  module * { export * }
+}

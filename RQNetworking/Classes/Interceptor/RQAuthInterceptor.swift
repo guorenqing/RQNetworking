@@ -1,0 +1,59 @@
+//
+//  RQAuthInterceptor.swift
+//  RQNetworking
+//
+//  Created by edy on 2025/11/19.
+//
+
+import Foundation
+import Alamofire
+
+/// 认证拦截器
+/// 处理请求的认证信息，如添加Token等
+public final class RQAuthInterceptor: RequestInterceptor {
+    
+    // MARK: - 属性
+    
+    /// 公共头提供者
+    public var commonHeadersProvider: (@Sendable () -> HTTPHeaders)?
+    
+    // MARK: - 初始化方法
+    
+    /// 初始化认证拦截器
+    /// - Parameter commonHeadersProvider: 公共头提供者
+    public init(commonHeadersProvider: (@Sendable () -> HTTPHeaders)? = nil) {
+        self.commonHeadersProvider = commonHeadersProvider
+    }
+    
+    // MARK: - RequestInterceptor协议实现
+    
+    public func adapt(
+        _ urlRequest: URLRequest,
+        for session: Session,
+        completion: @escaping (Result<URLRequest, Error>) -> Void
+    ) {
+        var adaptedRequest = urlRequest
+        
+        // 添加公共头
+        if let commonHeaders = commonHeadersProvider?() {
+            var headers = adaptedRequest.headers
+            for header in commonHeaders {
+                headers.update(header)
+            }
+            adaptedRequest.headers = headers
+        }
+        
+        completion(.success(adaptedRequest))
+    }
+    
+    public func retry(
+        _ request: Request,
+        for session: Session,
+        dueTo error: Error,
+        completion: @escaping (RetryResult) -> Void
+    ) {
+        // 认证拦截器不处理重试逻辑
+        completion(.doNotRetry)
+    }
+}
+

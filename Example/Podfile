@@ -1,0 +1,13 @@
+use_frameworks!
+
+platform :ios, '15.0'
+
+target 'RQNetworking_Example' do
+  pod 'RQNetworking', :path => '../'
+
+  target 'RQNetworking_Tests' do
+    inherit! :search_paths
+
+    
+  end
+end

@@ -1,0 +1,23 @@
+PODS:
+  - Alamofire (5.10.2)
+  - RQNetworking (0.1.0):
+    - Alamofire (~> 5.10.2)
+
+DEPENDENCIES:
+  - RQNetworking (from `../`)
+
+SPEC REPOS:
+  trunk:
+    - Alamofire
+
+EXTERNAL SOURCES:
+  RQNetworking:
+    :path: "../"
+
+SPEC CHECKSUMS:
+  Alamofire: 7193b3b92c74a07f85569e1a6c4f4237291e7496
+  RQNetworking: 7e154e29f61f5d1513c06419fde08bbaf4a748b4
+
+PODFILE CHECKSUM: 97b1d9dd95175ef6a8a174887d129fba1eaa5af5
+
+COCOAPODS: 1.16.2
