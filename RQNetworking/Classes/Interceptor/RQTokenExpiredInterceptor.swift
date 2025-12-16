@@ -59,7 +59,7 @@ public final class RQTokenExpiredInterceptor: RQResponseInterceptor {
     public func handleRetry(
         _ request: RQNetworkRequest,
         originalData: Data?,
-        completion: @escaping (Result<Void, Error>) -> Void
+        completion: @Sendable @escaping (Result<Void, Error>) -> Void
     ) {
         Task {
             do {

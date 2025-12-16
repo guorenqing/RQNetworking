@@ -12,29 +12,35 @@ import Alamofire
 
 /// 网络管理器
 /// 基于Alamofire封装的现代化网络请求库，支持拦截器、重试、公共参数等高级功能
-public final class RQNetworkManager: Sendable {
+public final class RQNetworkManager: @unchecked Sendable {
     
     // MARK: - 单例管理
     
     /// 单例实例存储
-    private static var _shared: RQNetworkManager?
+    nonisolated(unsafe) private static var _shared: RQNetworkManager? 
+    private static let lock = DispatchQueue(label: "com.rqnetwork.singleton", attributes: .concurrent)
     
     /// 获取共享网络管理器实例
     /// - Important: 在使用前必须先调用configure方法进行配置
-    public static var shared: RQNetworkManager {
-        guard let shared = _shared else {
-            fatalError("""
-            RQNetworkManager必须在使用前进行配置。
-            请在App启动时调用 RQNetworkManager.configure() 方法。
-            """)
+    /// 获取共享网络管理器实例
+        public static var shared: RQNetworkManager {
+            lock.sync(flags: .barrier) {
+                guard let instance = _shared else {
+                    fatalError("""
+                    RQNetworkManager必须在使用前进行配置。
+                    请在App启动时调用 RQNetworkManager.configure(baseURL:) 方法。
+                    """)
+                }
+                return instance
+            }
         }
-        return shared
-    }
     
     /// 配置网络管理器单例
     /// - Parameter configuration: 网络配置对象
     public static func configure(_ configuration: RQNetworkConfiguration = .empty) {
-        _shared = RQNetworkManager(configuration: configuration)
+        lock.sync(flags: .barrier) {
+            _shared = RQNetworkManager(configuration: configuration)
+        }
     }
     
     /// 重置单例实例
@@ -74,7 +80,7 @@ public final class RQNetworkManager: Sendable {
     private let commonHeadersProvider: (@Sendable () -> HTTPHeaders)?
     
     /// 公共参数提供者回调
-    private let commonParametersProvider: (@Sendable () -> Encodable?)?
+    private let commonParametersProvider: (@Sendable () -> (any Sendable & Codable)?)?
     
     /// 默认超时时间
     private let defaultTimeoutInterval: TimeInterval
@@ -181,7 +187,7 @@ public final class RQNetworkManager: Sendable {
     /// - Returns: 上传响应结果
     /// - Throws: 网络错误或解码错误
     @discardableResult
-    public func upload<T: Decodable>(
+    public func upload<T: Decodable & Sendable>(
         _ request: RQUploadRequest,
         progressHandler: ((Progress) -> Void)? = nil
     ) async throws -> RQUploadResponse<T> {
@@ -209,7 +215,7 @@ public final class RQNetworkManager: Sendable {
                         case .stream(let stream, let fileName, let mimeType):
                             // 使用 UInt64.max 作为安全的默认长度
                             formData.append(
-                                stream,
+                                stream.createStream(),
                                 withLength: UInt64.max,
                                 name: uploadData.name,
                                 fileName: fileName,
@@ -321,10 +327,10 @@ public final class RQNetworkManager: Sendable {
     ///   - commonParameters: 公共参数
     /// - Returns: 合并后的参数
     /// - Throws: 参数编码错误
-    private func mergeParameters(
-        requestParameters: Encodable?,
-        commonParameters: Encodable?
-    ) throws -> Encodable? {
+    private func mergeParameters2222<T: Sendable & Codable>(
+        requestParameters: T?,
+        commonParameters: T?
+    ) throws -> T? {
         // 如果都没有参数，返回nil
         guard let commonParams = commonParameters else {
             return requestParameters
@@ -334,14 +340,22 @@ public final class RQNetworkManager: Sendable {
             return commonParameters
         }
         
-        // 将两个Codable对象合并为一个字典
+        // 将两个参数编码为字典
         let commonDict = try encodeToDictionary(commonParams)
         let requestDict = try encodeToDictionary(requestParams)
         
-        // 请求参数优先（覆盖公共参数中的同名参数）
+        // 合并字典（请求参数优先）
         let mergedDict = commonDict.merging(requestDict) { _, new in new }
         
-        return mergedDict as? Encodable
+        // 将合并后的字典解码回类型 T
+        return try decodeFromDictionary(mergedDict, as: T.self)
+    }
+    
+    // 辅助方法：将字典解码为指定类型
+    private func decodeFromDictionary<T: Decodable>(_ dictionary: [String: Any], as type: T.Type) throws -> T {
+        let data = try JSONSerialization.data(withJSONObject: dictionary, options: [])
+        let decoder = JSONDecoder()
+        return try decoder.decode(type, from: data)
     }
     
     /// 将Encodable对象编码为字典
@@ -354,6 +368,41 @@ public final class RQNetworkManager: Sendable {
             throw RQNetworkError.encodingFailed(NSError(domain: "Encoding failed", code: -1))
         }
         return dictionary
+    }
+    
+    private func mergeParameters(
+        requestParameters: (any Sendable & Codable)?,
+        commonParameters: (any Codable)?
+    ) throws -> (any Sendable & Codable)? {
+        // 编码为字典
+        let commonDict = try commonParameters.flatMap(encodeToDictionary) ?? [:]
+        let requestDict = try requestParameters.flatMap(encodeToDictionary) ?? [:]
+        
+        // 如果两个都为空，返回nil
+        if commonDict.isEmpty && requestDict.isEmpty {
+            return nil
+        }
+        
+        // 合并字典（请求参数优先）
+        let mergedDict = commonDict.merging(requestDict) { _, new in new }
+        
+        // 返回 [String: String]，它符合 Sendable & Codable
+        let stringParameters = mergedDict.mapValues { value in
+            switch value {
+            case let string as String:
+                return string
+            case let int as Int:
+                return "\(int)"
+            case let double as Double:
+                return "\(double)"
+            case let bool as Bool:
+                return "\(bool)"
+            default:
+                return "\(value)"
+            }
+        }
+        
+        return stringParameters
     }
     
     /// 执行带拦截器的网络请求
@@ -475,7 +524,7 @@ public final class RQNetworkManager: Sendable {
     ///   - response: Alamofire上传响应对象
     ///   - request: 上传请求对象
     ///   - continuation: 异步续体
-    private func handleUploadResponse<T: Decodable>(
+    private func handleUploadResponse<T: Decodable & Sendable>(
         response: AFDataResponse<T>,
         request: RQUploadRequest,
         continuation: CheckedContinuation<RQUploadResponse<T>, Error>
@@ -609,7 +658,7 @@ public final class RQNetworkManager: Sendable {
     ///   - originalData: 原始响应数据
     ///   - interceptor: 触发重试的拦截器
     ///   - continuation: 异步续体
-    private func handleUploadRetry<T: Decodable>(
+    private func handleUploadRetry<T: Decodable & Sendable>(
         request: RQUploadRequest,
         originalData: Data?,
         interceptor: RQResponseInterceptor,
@@ -687,7 +736,7 @@ extension RQNetworkManager {
     public func get<T: Decodable>(
         domainKey: String,
         path: String,
-        parameters: Encodable? = nil
+        parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
         let request = RQRequestBuilder()
             .setDomainKey(domainKey)
@@ -709,7 +758,7 @@ extension RQNetworkManager {
     public func post<T: Decodable>(
         domainKey: String,
         path: String,
-        parameters: Encodable? = nil
+        parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
         let request = RQRequestBuilder()
             .setDomainKey(domainKey)
@@ -731,7 +780,7 @@ extension RQNetworkManager {
     public func put<T: Decodable>(
         domainKey: String,
         path: String,
-        parameters: Encodable? = nil
+        parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
         let request = RQRequestBuilder()
             .setDomainKey(domainKey)
@@ -753,7 +802,7 @@ extension RQNetworkManager {
     public func delete<T: Decodable>(
         domainKey: String,
         path: String,
-        parameters: Encodable? = nil
+        parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
         let request = RQRequestBuilder()
             .setDomainKey(domainKey)

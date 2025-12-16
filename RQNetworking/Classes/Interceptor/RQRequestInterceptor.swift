@@ -46,7 +46,7 @@ public final class RQCompositeRequestInterceptor:  RequestInterceptor, @unchecke
     public func adapt(
         _ urlRequest: URLRequest,
         for session: Session,
-        completion: @escaping (Result<URLRequest, Error>) -> Void
+        completion: @Sendable @escaping (Result<URLRequest, Error>) -> Void
     ) {
         // 获取拦截器快照，确保在递归执行期间不受外部修改影响
         let currentInterceptors = getInterceptorsSnapshot()
@@ -64,7 +64,7 @@ public final class RQCompositeRequestInterceptor:  RequestInterceptor, @unchecke
         _ request: Request,
         for session: Session,
         dueTo error: Error,
-        completion: @escaping (RetryResult) -> Void
+        completion: @Sendable @escaping (RetryResult) -> Void
     ) {
         // 获取拦截器快照，确保在递归执行期间不受外部修改影响
         let currentInterceptors = getInterceptorsSnapshot()
@@ -216,7 +216,7 @@ public final class RQCompositeRequestInterceptor:  RequestInterceptor, @unchecke
         urlRequest: URLRequest,
         interceptors: [RequestInterceptor],
         session: Session,
-        completion: @escaping (Result<URLRequest, Error>) -> Void
+        completion: @Sendable @escaping (Result<URLRequest, Error>) -> Void
     ) {
         // 基础情况：没有更多拦截器需要执行
         guard let firstInterceptor = interceptors.first else {
@@ -267,7 +267,7 @@ public final class RQCompositeRequestInterceptor:  RequestInterceptor, @unchecke
         interceptors: [RequestInterceptor],
         session: Session,
         dueTo error: Error,
-        completion: @escaping (RetryResult) -> Void
+        completion: @Sendable @escaping (RetryResult) -> Void
     ) {
         // 基础情况：没有更多拦截器需要执行
         guard let firstInterceptor = interceptors.first else {

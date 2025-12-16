@@ -10,7 +10,7 @@ import Foundation
 
 /// 重试配置结构体
 /// 定义网络请求失败时的重试策略
-public struct RQRetryConfiguration {
+public struct RQRetryConfiguration: Sendable {
     
     // MARK: - 配置属性
     
@@ -68,7 +68,7 @@ public struct RQRetryConfiguration {
 
 /// 重试延迟策略枚举
 /// 定义重试延迟时间的计算方式
-public enum RQRetryDelayStrategy {
+public enum RQRetryDelayStrategy: Sendable {
     
     /// 固定延迟
     /// - Parameter interval: 固定的延迟时间（秒）
@@ -82,7 +82,7 @@ public enum RQRetryDelayStrategy {
     
     /// 自定义延迟计算
     /// - Parameter calculator: 自定义延迟计算闭包，参数为重试次数
-    case custom((Int) -> TimeInterval)
+    case custom(@Sendable (Int) -> TimeInterval)
     
     /// 计算指定重试次数的延迟时间
     /// - Parameter retryCount: 当前重试次数（从0开始）
@@ -104,14 +104,14 @@ public enum RQRetryDelayStrategy {
 
 /// 重试条件结构体
 /// 定义在什么错误情况下应该进行重试
-public struct RQRetryCondition {
+public struct RQRetryCondition: Sendable {
     
     /// 条件判断闭包
-    private let condition: (Error, URLRequest, HTTPURLResponse?) -> Bool
+    private let condition: @Sendable (Error, URLRequest, HTTPURLResponse?) -> Bool
     
     /// 初始化重试条件
     /// - Parameter condition: 条件判断闭包
-    public init(condition: @escaping (Error, URLRequest, HTTPURLResponse?) -> Bool) {
+    public init(condition: @escaping @Sendable (Error, URLRequest, HTTPURLResponse?) -> Bool) {
         self.condition = condition
     }
     

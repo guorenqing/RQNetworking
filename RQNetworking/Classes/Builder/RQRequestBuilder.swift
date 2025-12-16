@@ -28,7 +28,7 @@ public final class RQRequestBuilder {
     private var headers: HTTPHeaders?
     
     /// 请求参数
-    private var requestParameters: Encodable?
+    private var requestParameters: (Codable & Sendable)?
     
     /// 请求参数编码器
     private var requestEncoder: ParameterEncoder?
@@ -98,7 +98,7 @@ public final class RQRequestBuilder {
     /// - Parameter parameters: 遵循Encodable协议的参数对象
     /// - Returns: 构建器自身，支持链式调用
     @discardableResult
-    public func setRequestParameters(_ parameters: Encodable?) -> Self {
+    public func setRequestParameters(_ parameters: (Codable & Sendable)?) -> Self {
         self.requestParameters = parameters
         return self
     }
@@ -166,7 +166,7 @@ public struct RQBasicRequest: RQNetworkRequest {
     public let path: String
     public let method: HTTPMethod
     public let headers: HTTPHeaders?
-    public let requestParameters: Encodable?
+    public let requestParameters: (any Sendable & Encodable)?
     public let requestEncoder: ParameterEncoder
     public let timeoutInterval: TimeInterval?
     public let requiresAuth: Bool
@@ -190,7 +190,7 @@ public struct RQBasicRequest: RQNetworkRequest {
         path: String,
         method: HTTPMethod = .get,
         headers: HTTPHeaders? = nil,
-        requestParameters: Encodable? = nil,
+        requestParameters: (Codable & Sendable)? = nil,
         requestEncoder: ParameterEncoder? = nil,
         timeoutInterval: TimeInterval? = nil,
         requiresAuth: Bool = true,
@@ -273,7 +273,7 @@ extension RQRequestBuilder {
     ///   - path: 请求路径
     ///   - parameters: JSON参数
     /// - Returns: 配置完成的构建器
-    public static func postJSON<T: Encodable>(
+    public static func postJSON<T: Codable & Sendable>(
         domainKey: String,
         path: String,
         parameters: T
@@ -292,7 +292,7 @@ extension RQRequestBuilder {
     ///   - path: 请求路径
     ///   - parameters: 查询参数
     /// - Returns: 配置完成的构建器
-    public static func getWithQuery<T: Encodable>(
+    public static func getWithQuery<T: Codable & Sendable>(
         domainKey: String,
         path: String,
         parameters: T

@@ -10,7 +10,7 @@ import Alamofire
 
 /// 认证拦截器
 /// 处理请求的认证信息，如添加Token等
-public final class RQAuthInterceptor: RequestInterceptor {
+public final class RQAuthInterceptor: @unchecked Sendable, RequestInterceptor {
     
     // MARK: - 属性
     
@@ -21,8 +21,8 @@ public final class RQAuthInterceptor: RequestInterceptor {
     
     /// 初始化认证拦截器
     /// - Parameter commonHeadersProvider: 公共头提供者
-    public init(commonHeadersProvider: (@Sendable () -> HTTPHeaders)? = nil) {
-        self.commonHeadersProvider = commonHeadersProvider
+    public init() {
+        
     }
     
     // MARK: - RequestInterceptor协议实现
@@ -35,13 +35,15 @@ public final class RQAuthInterceptor: RequestInterceptor {
         var adaptedRequest = urlRequest
         
         // 添加公共头
-        if let commonHeaders = commonHeadersProvider?() {
-            var headers = adaptedRequest.headers
-            for header in commonHeaders {
+        var headers = adaptedRequest.headers
+        
+        if let commonHeadersProvider = commonHeadersProvider {
+            for header in commonHeadersProvider() {
                 headers.update(header)
             }
             adaptedRequest.headers = headers
         }
+        
         
         completion(.success(adaptedRequest))
     }

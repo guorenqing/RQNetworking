@@ -28,7 +28,7 @@ public final class RQDownloadRequestBuilder {
     private var headers: HTTPHeaders?
     
     /// 请求参数
-    private var requestParameters: Encodable?
+    private var requestParameters: (Codable & Sendable)?
     
     /// 下载目的地
     private var destination: RQDownloadDestination = .temporary
@@ -89,7 +89,7 @@ public final class RQDownloadRequestBuilder {
     /// - Parameter parameters: 请求参数
     /// - Returns: 构建器自身，支持链式调用
     @discardableResult
-    public func setRequestParameters<T: Encodable>(_ parameters: T) -> Self {
+    public func setRequestParameters<T: Codable & Sendable>(_ parameters: T) -> Self {
         self.requestParameters = parameters
         return self
     }
@@ -184,7 +184,7 @@ public struct RQDownloadRequestImpl: RQDownloadRequest {
     public let path: String
     public let method: HTTPMethod
     public let headers: HTTPHeaders?
-    public let requestParameters: Encodable?
+    public let requestParameters: (any Sendable & Encodable)?
     public let requestEncoder: ParameterEncoder
     public let timeoutInterval: TimeInterval?
     public let requiresAuth: Bool
@@ -212,7 +212,7 @@ public struct RQDownloadRequestImpl: RQDownloadRequest {
         path: String,
         method: HTTPMethod = .get,
         headers: HTTPHeaders? = nil,
-        requestParameters: Encodable? = nil,
+        requestParameters: (Codable & Sendable)? = nil,
         destination: RQDownloadDestination,
         timeoutInterval: TimeInterval? = nil,
         requiresAuth: Bool = true,

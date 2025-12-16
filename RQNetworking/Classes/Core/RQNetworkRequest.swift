@@ -35,7 +35,7 @@ public protocol RQNetworkRequest: Sendable {
     
     /// 请求参数
     /// 支持任何遵循Encodable协议的类型，提供类型安全的参数传递
-    var requestParameters: Encodable? { get }
+    var requestParameters: (Codable & Sendable)? { get }
     
     /// 请求参数编码器
     /// 定义如何将参数编码到请求中（URL查询参数或JSON Body）
@@ -64,7 +64,7 @@ public extension RQNetworkRequest {
     var headers: HTTPHeaders? { nil }
     
     /// 默认无请求参数
-    var requestParameters: Encodable? { nil }
+    var requestParameters: (Codable & Sendable)? { nil }
     
     /// 默认参数编码器
     /// 根据HTTP方法智能选择：GET/DELETE使用URL编码，其他使用JSON编码

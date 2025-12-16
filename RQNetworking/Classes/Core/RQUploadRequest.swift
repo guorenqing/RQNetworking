@@ -44,9 +44,34 @@ public extension RQUploadRequest {
     var requiresAuth: Bool { true }
 }
 
+public struct SafeInputStream: Sendable {
+    private let _createStream: @Sendable () -> InputStream
+    
+    // 方式1：从 Data 创建
+    public init(data: Data) {
+        _createStream = { InputStream(data: data) }
+    }
+    
+    // 方式2：从 URL 创建
+    public init(url: URL) {
+        _createStream = { InputStream(url: url) ?? InputStream(data: Data()) }
+    }
+    
+    // 方式3：自定义创建逻辑
+    public init(createStream: @escaping @Sendable () -> InputStream) {
+        _createStream = createStream
+    }
+    
+    // 创建新的 InputStream 实例
+    public func createStream() -> InputStream {
+        return _createStream()
+    }
+}
+
+
 /// 上传数据类型枚举
 /// 定义支持的各种文件上传方式
-public enum RQUploadData {
+public enum RQUploadData: Sendable {
     
     /// 内存数据上传
     /// - Parameters:
@@ -67,7 +92,7 @@ public enum RQUploadData {
     ///   - stream: 输入流，用于大文件上传
     ///   - fileName: 文件名
     ///   - mimeType: MIME类型
-    case stream(InputStream, fileName: String, mimeType: String)
+    case stream(SafeInputStream, fileName: String, mimeType: String)
     
     /// 表单字段名称
     /// 在multipart form data中使用的字段名

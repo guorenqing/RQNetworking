@@ -35,7 +35,7 @@ public struct RQNetworkConfiguration {
     
     /// 公共参数提供者回调
     /// 使用回调而不是固定字典，因为参数可能是动态的（如时间戳、设备信息等）
-    public let commonParametersProvider: (@Sendable () -> Encodable?)?
+    public let commonParametersProvider: (@Sendable () -> Codable?)?
     
     // MARK: - 初始化方法
     
@@ -53,7 +53,7 @@ public struct RQNetworkConfiguration {
         responseInterceptors: [RQResponseInterceptor] = [],
         defaultTimeoutInterval: TimeInterval = 60.0,
         commonHeadersProvider: (@Sendable () -> HTTPHeaders)? = nil,
-        commonParametersProvider: (@Sendable () -> Encodable?)? = nil
+        commonParametersProvider: (@Sendable () -> Codable?)? = nil
     ) {
         self.domainManager = domainManager
         self.requestInterceptors = requestInterceptors
@@ -78,7 +78,7 @@ extension RQNetworkConfiguration {
         private var responseInterceptors: [RQResponseInterceptor] = []
         private var defaultTimeoutInterval: TimeInterval = 60.0
         private var commonHeadersProvider: (@Sendable () -> HTTPHeaders)?
-        private var commonParametersProvider: (@Sendable () -> Encodable?)?
+        private var commonParametersProvider: (@Sendable () -> Codable?)?
         
         /// 初始化空的构建器
         public init() {}
@@ -143,7 +143,7 @@ extension RQNetworkConfiguration {
         /// - Parameter parameters: 公共参数（必须实现Encodable协议）
         /// - Returns: 构建器自身，支持链式调用
         @discardableResult
-        public mutating func setCommonParameters<T: Encodable>(_ parameters: T) -> Self {
+        public mutating func setCommonParameters<T: Codable & Sendable>(_ parameters: T) -> Self {
             self.commonParametersProvider = { parameters }
             return self
         }
@@ -152,7 +152,7 @@ extension RQNetworkConfiguration {
         /// - Parameter provider: 公共参数提供者回调
         /// - Returns: 构建器自身，支持链式调用
         @discardableResult
-        public mutating func setCommonParametersProvider(_ provider: @escaping @Sendable () -> Encodable?) -> Self {
+        public mutating func setCommonParametersProvider(_ provider: @escaping @Sendable () -> Codable?) -> Self {
             self.commonParametersProvider = provider
             return self
         }

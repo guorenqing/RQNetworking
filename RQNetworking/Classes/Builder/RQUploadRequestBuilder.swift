@@ -205,7 +205,7 @@ public struct RQUploadRequestImpl: RQUploadRequest {
     public let path: String
     public let method: HTTPMethod
     public let headers: HTTPHeaders?
-    public let requestParameters: Encodable?
+    public let requestParameters: (any Sendable & Encodable)?
     public let requestEncoder: ParameterEncoder
     public let timeoutInterval: TimeInterval?
     public let requiresAuth: Bool

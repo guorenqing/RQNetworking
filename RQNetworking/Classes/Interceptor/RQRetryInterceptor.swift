@@ -15,16 +15,14 @@ public final class RQRetryInterceptor: RequestInterceptor {
     // MARK: - 属性
     
     /// 默认重试配置
-    public var defaultRetryConfiguration: RQRetryConfiguration? = .default
+    public let defaultRetryConfiguration: RQRetryConfiguration
     
-    /// 日志开关
-    private var logEnabled: Bool = true
     
     // MARK: - 初始化方法
     
     /// 初始化重试拦截器
     /// - Parameter defaultRetryConfiguration: 默认重试配置
-    public init(defaultRetryConfiguration: RQRetryConfiguration? = .default) {
+    public init(defaultRetryConfiguration: RQRetryConfiguration = .default) {
         self.defaultRetryConfiguration = defaultRetryConfiguration
     }
     
@@ -53,17 +51,10 @@ public final class RQRetryInterceptor: RequestInterceptor {
         // 获取重试配置
         let retryConfig = defaultRetryConfiguration
         
-        guard let config = retryConfig else {
-            completion(.doNotRetry)
-            return
-        }
-        
         // 检查当前重试次数
         let retryCount = request.retryCount
-        guard retryCount < config.maxRetryCount else {
-            if logEnabled {
-                print("🔄 [RQNetwork] 达到最大重试次数: \(config.maxRetryCount)")
-            }
+        guard retryCount < retryConfig.maxRetryCount else {
+            print("🔄 [RQNetwork] 达到最大重试次数: \(retryConfig.maxRetryCount)")
             completion(.doNotRetry)
             return
         }
@@ -73,18 +64,16 @@ public final class RQRetryInterceptor: RequestInterceptor {
             error: error,
             request: originalRequest,
             retryCount: retryCount,
-            configuration: config
+            configuration: retryConfig
         ) else {
             completion(.doNotRetry)
             return
         }
         
         // 计算延迟
-        let delay = config.delayStrategy.delay(for: retryCount)
+        let delay = retryConfig.delayStrategy.delay(for: retryCount)
         
-        if logEnabled {
-            print("🔄 [RQNetwork] 第\(retryCount + 1)次重试，延迟\(delay)秒")
-        }
+        print("🔄 [RQNetwork] 第\(retryCount + 1)次重试，延迟\(delay)秒")
         
         completion(.retryWithDelay(delay))
     }

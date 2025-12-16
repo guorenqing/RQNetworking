@@ -39,7 +39,7 @@ public extension RQDownloadRequest {
 
 /// 下载目的地枚举
 /// 定义文件下载后的保存位置
-public enum RQDownloadDestination {
+public enum RQDownloadDestination: Sendable {
     
     /// 临时目录
     /// 文件保存在系统临时目录，文件名自动生成UUID

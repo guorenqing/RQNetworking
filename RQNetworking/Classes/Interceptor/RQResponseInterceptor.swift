@@ -50,7 +50,7 @@ public protocol RQResponseInterceptor: Sendable {
     func handleRetry(
         _ request: RQNetworkRequest,
         originalData: Data?,
-        completion: @escaping (Result<Void, Error>) -> Void
+        completion: @Sendable @escaping (Result<Void, Error>) -> Void
     )
 }
 
