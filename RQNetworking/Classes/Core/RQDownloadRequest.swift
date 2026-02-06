@@ -23,7 +23,7 @@ public protocol RQDownloadRequest: RQNetworkRequest {
 public extension RQDownloadRequest {
     
     /// 文件下载请求默认无请求参数
-    var requestParameters: Encodable? { nil }
+    var requestParameters: (Codable & Sendable)? { nil }
     
     /// 文件下载使用URL编码器
     var requestEncoder: ParameterEncoder {
@@ -33,8 +33,8 @@ public extension RQDownloadRequest {
     /// 文件下载默认需要较长的超时时间
     var timeoutInterval: TimeInterval? { 600.0 } // 10分钟
     
-    /// 文件下载默认需要认证
-    var requiresAuth: Bool { true }
+    /// 文件下载默认需要公共头
+    var requiresCommonHeaders: Bool { true }
 }
 
 /// 下载目的地枚举

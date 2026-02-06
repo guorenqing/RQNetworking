@@ -16,7 +16,7 @@ public final class RQDownloadRequestBuilder {
     // MARK: - 构建器属性
     
     /// 域名标识
-    private var domainKey: String = ""
+    private var domainKey: RQDomainKey = ""
     
     /// 请求路径
     private var path: String = ""
@@ -36,11 +36,17 @@ public final class RQDownloadRequestBuilder {
     /// 超时时间
     private var timeoutInterval: TimeInterval?
     
-    /// 是否需要认证
-    private var requiresAuth: Bool = true
+    /// 是否需要公共头
+    private var requiresCommonHeaders: Bool = true
     
     /// 重试配置
     private var retryConfiguration: RQRetryConfiguration?
+
+    /// 请求级JSON解码器
+    private var jsonDecoder: JSONDecoder?
+
+    /// 请求级JSON编码器
+    private var jsonEncoder: JSONEncoder?
     
     // MARK: - 初始化方法
     
@@ -53,7 +59,7 @@ public final class RQDownloadRequestBuilder {
     /// - Parameter domainKey: 域名标识
     /// - Returns: 构建器自身，支持链式调用
     @discardableResult
-    public func setDomainKey(_ domainKey: String) -> Self {
+    public func setDomainKey(_ domainKey: RQDomainKey) -> Self {
         self.domainKey = domainKey
         return self
     }
@@ -139,12 +145,12 @@ public final class RQDownloadRequestBuilder {
         return self
     }
     
-    /// 设置是否需要认证
-    /// - Parameter requires: 是否需要认证
+    /// 设置是否需要公共头
+    /// - Parameter requires: 是否需要公共头
     /// - Returns: 构建器自身，支持链式调用
     @discardableResult
-    public func setRequiresAuth(_ requires: Bool) -> Self {
-        self.requiresAuth = requires
+    public func setRequiresCommonHeaders(_ requires: Bool) -> Self {
+        self.requiresCommonHeaders = requires
         return self
     }
     
@@ -154,6 +160,24 @@ public final class RQDownloadRequestBuilder {
     @discardableResult
     public func setRetryConfiguration(_ configuration: RQRetryConfiguration) -> Self {
         self.retryConfiguration = configuration
+        return self
+    }
+
+    /// 设置请求级JSON解码器
+    /// - Parameter decoder: JSON解码器
+    /// - Returns: 构建器自身，支持链式调用
+    @discardableResult
+    public func setJSONDecoder(_ decoder: JSONDecoder) -> Self {
+        self.jsonDecoder = decoder
+        return self
+    }
+
+    /// 设置请求级JSON编码器
+    /// - Parameter encoder: JSON编码器
+    /// - Returns: 构建器自身，支持链式调用
+    @discardableResult
+    public func setJSONEncoder(_ encoder: JSONEncoder) -> Self {
+        self.jsonEncoder = encoder
         return self
     }
     
@@ -168,8 +192,10 @@ public final class RQDownloadRequestBuilder {
             requestParameters: requestParameters,
             destination: destination,
             timeoutInterval: timeoutInterval,
-            requiresAuth: requiresAuth,
-            retryConfiguration: retryConfiguration
+            requiresCommonHeaders: requiresCommonHeaders,
+            retryConfiguration: retryConfiguration,
+            jsonDecoder: jsonDecoder,
+            jsonEncoder: jsonEncoder
         )
     }
 }
@@ -180,15 +206,17 @@ public struct RQDownloadRequestImpl: RQDownloadRequest {
     
     // MARK: - RQNetworkRequest协议属性
     
-    public let domainKey: String
+    public let domainKey: RQDomainKey
     public let path: String
     public let method: HTTPMethod
     public let headers: HTTPHeaders?
     public let requestParameters: (any Sendable & Encodable)?
     public let requestEncoder: ParameterEncoder
     public let timeoutInterval: TimeInterval?
-    public let requiresAuth: Bool
+    public let requiresCommonHeaders: Bool
     public let retryConfiguration: RQRetryConfiguration?
+    public let jsonDecoder: JSONDecoder?
+    public let jsonEncoder: JSONEncoder?
     
     // MARK: - RQDownloadRequest协议属性
     
@@ -205,18 +233,20 @@ public struct RQDownloadRequestImpl: RQDownloadRequest {
     ///   - requestParameters: 请求参数，默认为nil
     ///   - destination: 下载目的地
     ///   - timeoutInterval: 超时时间，默认为nil（使用全局配置）
-    ///   - requiresAuth: 是否需要认证，默认为true
+    ///   - requiresCommonHeaders: 是否需要公共头，默认为true
     ///   - retryConfiguration: 重试配置，默认为nil（使用全局配置）
     public init(
-        domainKey: String,
+        domainKey: RQDomainKey,
         path: String,
         method: HTTPMethod = .get,
         headers: HTTPHeaders? = nil,
         requestParameters: (Codable & Sendable)? = nil,
         destination: RQDownloadDestination,
         timeoutInterval: TimeInterval? = nil,
-        requiresAuth: Bool = true,
-        retryConfiguration: RQRetryConfiguration? = nil
+        requiresCommonHeaders: Bool = true,
+        retryConfiguration: RQRetryConfiguration? = nil,
+        jsonDecoder: JSONDecoder? = nil,
+        jsonEncoder: JSONEncoder? = nil
     ) {
         self.domainKey = domainKey
         self.path = path
@@ -226,8 +256,10 @@ public struct RQDownloadRequestImpl: RQDownloadRequest {
         self.requestEncoder = URLEncodedFormParameterEncoder.default
         self.destination = destination
         self.timeoutInterval = timeoutInterval
-        self.requiresAuth = requiresAuth
+        self.requiresCommonHeaders = requiresCommonHeaders
         self.retryConfiguration = retryConfiguration
+        self.jsonDecoder = jsonDecoder
+        self.jsonEncoder = jsonEncoder
     }
 }
 
@@ -241,7 +273,7 @@ extension RQDownloadRequestBuilder {
     ///   - fileName: 保存的文件名
     /// - Returns: 配置完成的构建器
     public static func imageDownload(
-        domainKey: String,
+        domainKey: RQDomainKey,
         path: String,
         fileName: String
     ) -> RQDownloadRequestBuilder {
@@ -260,7 +292,7 @@ extension RQDownloadRequestBuilder {
     ///   - fileName: 保存的文件名
     /// - Returns: 配置完成的构建器
     public static func largeFileDownload(
-        domainKey: String,
+        domainKey: RQDomainKey,
         path: String,
         fileName: String
     ) -> RQDownloadRequestBuilder {

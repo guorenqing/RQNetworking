@@ -55,6 +55,10 @@ public final class RQBusinessStatusInterceptor: RQResponseInterceptor {
         error: Error?,
         for request: RQNetworkRequest
     ) async -> RQInterceptResult {
+
+        guard request.requiresCommonHeaders else {
+            return .proceed
+        }
         
         // 如果没有数据或数据为空，直接继续
         guard let data = data, !data.isEmpty else {

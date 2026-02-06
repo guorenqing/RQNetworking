@@ -44,6 +44,12 @@ pod 'RQNetworking', '~> 1.0'
 import RQNetworking
 import Alamofire
 
+extension RQDomainKey {
+    static let api: RQDomainKey = "api"
+    static let upload: RQDomainKey = "upload"
+    static let cdn: RQDomainKey = "cdn"
+}
+
 /// 应用网络配置
 public final class AppNetworkConfig {
     
@@ -120,7 +126,7 @@ public final class AppNetworkConfig {
         let domainManager = RQDomainManager.shared
         
         // 注册API域名
-        domainManager.registerDomain(key: "api", urls: [
+        domainManager.registerDomain(key: .api, urls: [
             .develop("d1"): "https://dev-api.example.com",
             .develop("d2"): "https://dev-api-2.example.com",
             .test("t1"): "https://test-api.example.com",
@@ -129,7 +135,7 @@ public final class AppNetworkConfig {
         ])
         
         // 注册上传域名
-        domainManager.registerDomain(key: "upload", urls: [
+        domainManager.registerDomain(key: .upload, urls: [
             .develop("d1"): "https://dev-upload.example.com",
             .test("t1"): "https://test-upload.example.com",
             .production: "https://upload.example.com"
@@ -174,7 +180,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 ```swift
 // 使用构建器创建请求
 let request = RQRequestBuilder()
-    .setDomainKey("api")
+    .setDomainKey(.api)
     .setPath("/users")
     .setMethod(.get)
     .build()
@@ -187,21 +193,94 @@ do {
 }
 ```
 
+RQRequest 模板方式调用：
+
+```swift
+struct LoginRequest: RQRequest {
+    let username: String
+    let password: String
+
+    var requestConfig: RQRequestConfig {
+        RQRequestConfig(
+            domainKey: .api,
+            path: "/login",
+            method: .post,
+            requestParameters: LoginBody(username: username, password: password)
+        )
+    }
+}
+
+let response = try await RQNetworkManager.shared.request(
+    LoginRequest(username: "user", password: "pass")
+)
+print("登录成功: \(response.data)")
+```
+
+RQRequest 的闭包方式：
+
+```swift
+let cancelable = RQNetworkManager.shared.request(
+    LoginRequest(username: "user", password: "pass")
+) { (result: Result<RQResponse<LoginResponse>, Error>) in
+    switch result {
+    case .success(let response):
+        print("登录成功: \(response.data)")
+    case .failure(let error):
+        print("登录失败: \(error)")
+    }
+}
+
+// 需要时可取消
+cancelable.cancel()
+```
+
+闭包方式调用：
+
+```swift
+let cancelable = RQNetworkManager.shared.request(request) { (result: Result<RQResponse<UserList>, Error>) in
+    switch result {
+    case .success(let response):
+        print("获取用户成功: \(response.data)")
+    case .failure(let error):
+        print("请求失败: \(error)")
+    }
+}
+
+// 需要时可取消
+cancelable.cancel()
+```
+
 ### 4. 便捷方法
 
 ```swift
 // 快速 GET 请求
 let users: RQResponse<UserList> = try await RQNetworkManager.shared.get(
-    domainKey: "api", 
+    domainKey: .api,
     path: "/users"
 )
 
 // 快速 POST 请求
 let response: RQResponse<LoginResponse> = try await RQNetworkManager.shared.post(
-    domainKey: "api",
+    domainKey: .api,
     path: "/login",
     parameters: LoginRequest(username: "user", password: "pass")
 )
+```
+
+便捷方法的闭包方式：
+
+```swift
+RQNetworkManager.shared.get(
+    domainKey: .api,
+    path: "/users"
+) { (result: Result<RQResponse<UserList>, Error>) in
+    switch result {
+    case .success(let response):
+        print("获取用户成功: \(response.data)")
+    case .failure(let error):
+        print("请求失败: \(error)")
+    }
+}
 ```
 
 ## 📁 核心功能
@@ -211,7 +290,7 @@ let response: RQResponse<LoginResponse> = try await RQNetworkManager.shared.post
 #### 普通请求
 ```swift
 let request = RQRequestBuilder()
-    .setDomainKey("api")
+    .setDomainKey(.api)
     .setPath("/users")
     .setMethod(.post)
     .setRequestParameters(userParams)
@@ -223,7 +302,7 @@ let request = RQRequestBuilder()
 #### 文件上传
 ```swift
 let uploadRequest = RQUploadRequestBuilder()
-    .setDomainKey("upload")
+    .setDomainKey(.upload)
     .setPath("/images")
     .addDataUpload(imageData, fileName: "photo.jpg", mimeType: "image/jpeg")
     .addFormField(key: "description", value: "用户头像")
@@ -233,7 +312,7 @@ let uploadRequest = RQUploadRequestBuilder()
 #### 文件下载
 ```swift
 let downloadRequest = RQDownloadRequestBuilder()
-    .setDomainKey("cdn")
+    .setDomainKey(.cdn)
     .setPath("/files/document.pdf")
     .setDocumentDestination(fileName: "important.pdf")
     .setTimeoutInterval(300)
@@ -245,21 +324,21 @@ let downloadRequest = RQDownloadRequestBuilder()
 ```swift
 // JSON POST 请求
 let request = RQRequestBuilder.postJSON(
-    domainKey: "api",
+    domainKey: .api,
     path: "/users",
     parameters: userData
 )
 
 // 带查询参数的 GET 请求
 let request = RQRequestBuilder.getWithQuery(
-    domainKey: "api", 
+    domainKey: .api,
     path: "/search",
     parameters: searchParams
 )
 
 // 图片下载
 let request = RQDownloadRequestBuilder.imageDownload(
-    domainKey: "cdn",
+    domainKey: .cdn,
     path: "/images/avatar.jpg",
     fileName: "user_avatar.jpg"
 )
@@ -325,7 +404,7 @@ builder.setCommonHeadersProvider {
 ### 多环境域名管理
 ```swift
 // 注册多环境域名
-domainManager.registerDomain(key: "api", urls: [
+domainManager.registerDomain(key: .api, urls: [
     .develop("d1"): "https://dev-api.example.com",
     .develop("d2"): "https://dev-api-2.example.com",
     .test("t1"): "https://test-api.example.com",
@@ -350,14 +429,14 @@ domainManager.setEnvironment(.production)
 ```swift
 class UserService {
     static func fetchUsers() async throws -> [User] {
-        let request = RQRequestBuilder.get(domainKey: "api", path: "/users")
+        let request = RQRequestBuilder.get(domainKey: .api, path: "/users")
         let response: RQResponse<UserListResponse> = try await RQNetworkManager.shared.request(request)
         return response.data.users
     }
     
     static func uploadAvatar(_ imageData: Data) async throws -> String {
         let request = RQUploadRequestBuilder()
-            .setDomainKey("upload")
+            .setDomainKey(.upload)
             .setPath("/users/avatar")
             .addDataUpload(imageData, fileName: "avatar.jpg", mimeType: "image/jpeg")
             .build()
@@ -368,7 +447,7 @@ class UserService {
     
     static func downloadUserManual() async throws -> URL {
         let request = RQDownloadRequestBuilder()
-            .setDomainKey("api")
+            .setDomainKey(.api)
             .setPath("/documents/manual.pdf")
             .setDocumentDestination(fileName: "user_manual.pdf")
             .build()

@@ -29,7 +29,7 @@ public extension RQUploadRequest {
     
     /// 文件上传请求默认无普通请求参数
     /// 参数通过 multipart form data 方式传递
-    var requestParameters: Encodable? { nil }
+    var requestParameters: (Codable & Sendable)? { nil }
     
     /// 文件上传使用URL编码器作为默认编码器
     /// 实际参数会在 multipart form data 中处理
@@ -40,8 +40,8 @@ public extension RQUploadRequest {
     /// 文件上传默认需要较长的超时时间
     var timeoutInterval: TimeInterval? { 300.0 } // 5分钟
     
-    /// 文件上传默认需要认证
-    var requiresAuth: Bool { true }
+    /// 文件上传默认需要公共头
+    var requiresCommonHeaders: Bool { true }
 }
 
 public struct SafeInputStream: Sendable {

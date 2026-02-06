@@ -18,7 +18,9 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
     public static let shared = RQTokenRefreshManager()
     
     /// 私有初始化方法，确保单例模式
-    private init() {}
+    private init() {
+        tokenRefreshQueue.setSpecific(key: queueKey, value: ())
+    }
     
     // MARK: - 属性
     
@@ -29,14 +31,11 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
     /// Token 刷新状态队列
     /// 用于同步访问刷新状态和等待队列
     private let tokenRefreshQueue = DispatchQueue(label: "com.rqnetwork.tokenRefreshQueue")
+    private let queueKey = DispatchSpecificKey<Void>()
     
     /// Token 刷新状态标志
     /// 表示当前是否正在刷新 Token
     private var _isRefreshingToken = false
-    private var isRefreshingToken: Bool {
-        get { tokenRefreshQueue.sync { _isRefreshingToken } }
-        set { tokenRefreshQueue.sync { _isRefreshingToken = newValue } }
-    }
     
     /// 等待 Token 刷新的续体数组
     /// 当多个请求同时遇到 Token 过期时，其他请求会等待当前刷新完成
@@ -62,26 +61,12 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
         guard refreshTokenHandler != nil else {
             throw TokenRefreshError.noRefreshHandlerSet
         }
-        
-        // 检查是否达到最大失败次数
-        guard refreshFailureCount < maxRefreshFailureCount else {
-            throw TokenRefreshError.maxRetryExceeded
-        }
-        
-        // 如果已经在刷新中，等待当前刷新完成
-        if isRefreshingToken {
-            print("🔐 [TokenRefreshManager] Token 正在刷新中，等待完成...")
-            return try await waitForTokenRefresh()
-        }
-        
-        // 开始新的刷新流程
-        print("🔐 [TokenRefreshManager] 开始 Token 刷新流程...")
-        return try await performTokenRefresh()
+        return try await enqueueTokenRefresh()
     }
     
     /// 手动触发 Token 刷新
     /// - Returns: 刷新成功返回 true，失败抛出错误
-    /// - Note: 与 handleAuthFailure 不同，此方法不会检查是否已经在刷新中
+    /// - Note: 如果已有刷新任务在执行，会复用当前刷新结果
     @discardableResult
     public func refreshToken() async throws -> Bool {
         guard refreshTokenHandler != nil else {
@@ -89,19 +74,21 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
         }
         
         print("🔐 [TokenRefreshManager] 手动触发 Token 刷新...")
-        return try await performTokenRefresh()
+        return try await enqueueTokenRefresh()
     }
     
     /// 检查 Token 是否需要刷新（基于时间）
     /// - Parameter maxAge: Token 最大有效期（秒），默认 30 分钟
     /// - Returns: 如果需要刷新返回 true
     public func shouldRefreshToken(maxAge: TimeInterval = 30 * 60) -> Bool {
-        guard let lastRefresh = lastRefreshTime else {
-            return true // 从未刷新过，需要刷新
+        return withQueueSync {
+            guard let lastRefresh = lastRefreshTime else {
+                return true // 从未刷新过，需要刷新
+            }
+            
+            let timeSinceLastRefresh = Date().timeIntervalSince(lastRefresh)
+            return timeSinceLastRefresh > maxAge
         }
-        
-        let timeSinceLastRefresh = Date().timeIntervalSince(lastRefresh)
-        return timeSinceLastRefresh > maxAge
     }
     
     
@@ -109,7 +96,7 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
     /// 重置刷新状态
     /// 用于用户登出或清除认证状态时调用
     public func reset() {
-        tokenRefreshQueue.async { [weak self] in
+        tokenRefreshQueue.sync { [weak self] in
             guard let self = self else { return }
             
             self._isRefreshingToken = false
@@ -129,67 +116,73 @@ public final class RQTokenRefreshManager: @unchecked Sendable {
     
     // MARK: - 私有方法
     
-    /// 执行 Token 刷新
-    private func performTokenRefresh() async throws -> Bool {
-        // 设置刷新状态
-        isRefreshingToken = true
-        
-        // 确保在方法退出时重置状态
-        defer {
-            tokenRefreshQueue.async { [weak self] in
-                guard let self = self else { return }
-                self._isRefreshingToken = false
-                self.refreshContinuations.removeAll()
-            }
-        }
-        
-        do {
-            print("🔄 [TokenRefreshManager] 执行 Token 刷新...")
-            
-            // 执行实际的 Token 刷新逻辑
-            try await refreshTokenHandler?()
-            
-            // 更新状态
+    /// 等待或发起 Token 刷新
+    private func enqueueTokenRefresh() async throws -> Bool {
+        return try await withCheckedThrowingContinuation { continuation in
             tokenRefreshQueue.async { [weak self] in
                 guard let self = self else { return }
                 
-                self.lastRefreshTime = Date()
-                self.refreshFailureCount = 0 // 重置失败计数
+                // 检查是否达到最大失败次数
+                if self.refreshFailureCount >= self.maxRefreshFailureCount {
+                    continuation.resume(throwing: TokenRefreshError.maxRetryExceeded)
+                    return
+                }
                 
-                // 通知所有等待的请求刷新成功
-                for continuation in self.refreshContinuations {
-                    continuation.resume(returning: true)
+                // 如果已在刷新中，加入等待队列
+                if self._isRefreshingToken {
+                    print("🔐 [TokenRefreshManager] Token 正在刷新中，等待完成...")
+                    self.refreshContinuations.append(continuation)
+                    return
+                }
+                
+                // 启动新的刷新流程
+                self._isRefreshingToken = true
+                self.refreshContinuations.append(continuation)
+                
+                Task { [weak self] in
+                    await self?.performTokenRefreshAndNotify()
                 }
             }
-            
-            print("✅ [TokenRefreshManager] Token 刷新成功")
-            return true
-            
-        } catch {
-            // 更新失败状态
-            tokenRefreshQueue.async { [weak self] in
-                guard let self = self else { return }
-                
-                self.refreshFailureCount += 1
-                
-                // 通知所有等待的请求刷新失败
-                for continuation in self.refreshContinuations {
-                    continuation.resume(throwing: error)
-                }
-            }
-            
-            print("❌ [TokenRefreshManager] Token 刷新失败: \(error)")
-            throw error
         }
     }
     
-    /// 等待正在进行的 Token 刷新完成
-    private func waitForTokenRefresh() async throws -> Bool {
-        return try await withCheckedThrowingContinuation { continuation in
-            tokenRefreshQueue.async { [weak self] in
-                self?.refreshContinuations.append(continuation)
+    /// 执行 Token 刷新并通知等待者
+    private func performTokenRefreshAndNotify() async {
+        do {
+            print("🔄 [TokenRefreshManager] 执行 Token 刷新...")
+            try await refreshTokenHandler?()
+            let continuations = withQueueSync {
+                self.lastRefreshTime = Date()
+                self.refreshFailureCount = 0
+                self._isRefreshingToken = false
+                let continuations = self.refreshContinuations
+                self.refreshContinuations.removeAll()
+                return continuations
             }
+            for continuation in continuations {
+                continuation.resume(returning: true)
+            }
+            print("✅ [TokenRefreshManager] Token 刷新成功")
+        } catch {
+            let continuations = withQueueSync {
+                self.refreshFailureCount += 1
+                self._isRefreshingToken = false
+                let continuations = self.refreshContinuations
+                self.refreshContinuations.removeAll()
+                return continuations
+            }
+            for continuation in continuations {
+                continuation.resume(throwing: error)
+            }
+            print("❌ [TokenRefreshManager] Token 刷新失败: \(error)")
         }
+    }
+    
+    private func withQueueSync<T>(_ block: () -> T) -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            return block()
+        }
+        return tokenRefreshQueue.sync(execute: block)
     }
 }
 
@@ -215,4 +208,3 @@ public enum TokenRefreshError: Error, LocalizedError {
         }
     }
 }
-

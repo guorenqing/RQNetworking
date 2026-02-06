@@ -9,6 +9,12 @@
 import RQNetworking
 import Alamofire
 
+extension RQDomainKey {
+    static let api: RQDomainKey = "api"
+    static let upload: RQDomainKey = "upload"
+    static let demo: RQDomainKey = "demo"
+}
+
 /// 应用网络配置
 public final class AppNetworkConfig {
     
@@ -22,12 +28,10 @@ public final class AppNetworkConfig {
         let configuration = RQNetworkConfiguration.build { builder in
             
             // 添加请求拦截器
-            
-            // 请求日志拦截器
-            builder.addRequestInterceptor(RQRequestLoggingInterceptor())
-            
             // 认证相关拦截器
             builder.addRequestInterceptor(RQAuthInterceptor())
+            // 请求日志拦截器
+            builder.addRequestInterceptor(RQRequestLoggingInterceptor())
             
             // 重试逻辑拦截器
             builder.addRequestInterceptor(RQRetryInterceptor(
@@ -39,6 +43,7 @@ public final class AppNetworkConfig {
             ))
             
             // 添加响应拦截器（token过期状态码定义在状态码里）
+            builder.addResponseInterceptor(RQResponseLoggingInterceptor())
             builder.addResponseInterceptor(RQTokenExpiredInterceptor(
                 tokenRefreshHandler: {
                     try await RQTokenRefreshManager.shared.handleTokenExpired()
@@ -99,7 +104,7 @@ public final class AppNetworkConfig {
         let domainManager = RQDomainManager.shared
         
         // 注册API域名
-        domainManager.registerDomain(key: "api", urls: [
+        domainManager.registerDomain(key: .api, urls: [
             .develop("d1"): "https://dev-api.example.com",
             .develop("d2"): "https://dev-api-2.example.com",
             .test("t1"): "https://test-api.example.com",
@@ -108,10 +113,19 @@ public final class AppNetworkConfig {
         ])
         
         // 注册上传域名
-        domainManager.registerDomain(key: "upload", urls: [
+        domainManager.registerDomain(key: .upload, urls: [
             .develop("d1"): "https://dev-upload.example.com",
             .test("t1"): "https://test-upload.example.com",
             .production: "https://upload.example.com"
+        ])
+        
+        // 注册演示域名（真实可访问）
+        domainManager.registerDomain(key: .demo, urls: [
+            .develop("d1"): "https://httpbin.org",
+            .develop("d2"): "https://httpbin.org",
+            .test("t1"): "https://httpbin.org",
+            .preProduction: "https://httpbin.org",
+            .production: "https://httpbin.org"
         ])
         
         // 设置当前环境（根据编译配置或用户设置）

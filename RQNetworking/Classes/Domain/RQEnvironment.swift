@@ -8,6 +8,25 @@
 
 import Foundation
 
+/// 域名标识类型
+/// 用于在业务侧定义可复用的域名Key，避免字符串拼写错误
+public struct RQDomainKey: RawRepresentable, Hashable, Sendable, ExpressibleByStringLiteral {
+    
+    public let rawValue: String
+    
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+    
+    public init(_ value: String) {
+        self.rawValue = value
+    }
+    
+    public init(stringLiteral value: String) {
+        self.rawValue = value
+    }
+}
+
 /// 网络环境类型枚举
 /// 用于管理不同部署环境（开发、测试、预生产、生产等）
 public enum RQEnvironment: Equatable, Hashable {

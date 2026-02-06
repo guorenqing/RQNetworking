@@ -10,10 +10,12 @@
 		0423DEA22ED724F3009DDC89 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0423DEA02ED724F2009DDC89 /* ContentView.swift */; };
 		0423DEA32ED724F3009DDC89 /* GLMAgentApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0423DEA12ED724F2009DDC89 /* GLMAgentApp.swift */; };
 		04F6D5532ECE2DB4004154D2 /* AppNetworkConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04F6D5522ECE2DB4004154D2 /* AppNetworkConfig.swift */; };
+		D7F0C2D45A8B4E2C9F2A1B3C /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7F0C2D35A8B4E2C9F2A1B3C /* ViewController.swift */; };
 		607FACDB1AFB9204008FA782 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 607FACD91AFB9204008FA782 /* Main.storyboard */; };
 		607FACDD1AFB9204008FA782 /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 607FACDC1AFB9204008FA782 /* Images.xcassets */; };
 		607FACE01AFB9204008FA782 /* LaunchScreen.xib in Resources */ = {isa = PBXBuildFile; fileRef = 607FACDE1AFB9204008FA782 /* LaunchScreen.xib */; };
 		607FACEC1AFB9204008FA782 /* Tests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 607FACEB1AFB9204008FA782 /* Tests.swift */; };
+		960AC908369B4CEDAB8272A5 /* RQRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04664920974E4D928F0C2D78 /* RQRetryTests.swift */; };
 		B7400261CCC502BCFF3A9E82 /* Pods_RQNetworking_Tests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 05666D6802FF56190781E24B /* Pods_RQNetworking_Tests.framework */; };
 		D86B1CFE89A6C4F310DE56AE /* Pods_RQNetworking_Example.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CA67AA7B73C98E3D97722D15 /* Pods_RQNetworking_Example.framework */; };
 /* End PBXBuildFile section */
@@ -31,7 +33,9 @@
 /* Begin PBXFileReference section */
 		0423DEA02ED724F2009DDC89 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		0423DEA12ED724F2009DDC89 /* GLMAgentApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GLMAgentApp.swift; sourceTree = "<group>"; };
+		04664920974E4D928F0C2D78 /* RQRetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RQRetryTests.swift; sourceTree = "<group>"; };
 		04F6D5522ECE2DB4004154D2 /* AppNetworkConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppNetworkConfig.swift; sourceTree = "<group>"; };
+		D7F0C2D35A8B4E2C9F2A1B3C /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
 		05666D6802FF56190781E24B /* Pods_RQNetworking_Tests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RQNetworking_Tests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		103BFEC3881EC16A89DF5B0B /* Pods-RQNetworking_Tests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RQNetworking_Tests.release.xcconfig"; path = "Target Support Files/Pods-RQNetworking_Tests/Pods-RQNetworking_Tests.release.xcconfig"; sourceTree = "<group>"; };
 		33D35EC6F67BB97A24D4481C /* LICENSE */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text; name = LICENSE; path = ../LICENSE; sourceTree = "<group>"; };
@@ -107,6 +111,7 @@
 				0423DEA02ED724F2009DDC89 /* ContentView.swift */,
 				0423DEA12ED724F2009DDC89 /* GLMAgentApp.swift */,
 				04F6D5522ECE2DB4004154D2 /* AppNetworkConfig.swift */,
+				D7F0C2D35A8B4E2C9F2A1B3C /* ViewController.swift */,
 				607FACD91AFB9204008FA782 /* Main.storyboard */,
 				607FACDC1AFB9204008FA782 /* Images.xcassets */,
 				607FACDE1AFB9204008FA782 /* LaunchScreen.xib */,
@@ -127,6 +132,7 @@
 		607FACE81AFB9204008FA782 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				04664920974E4D928F0C2D78 /* RQRetryTests.swift */,
 				607FACEB1AFB9204008FA782 /* Tests.swift */,
 				607FACE91AFB9204008FA782 /* Supporting Files */,
 			);
@@ -337,6 +343,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				04F6D5532ECE2DB4004154D2 /* AppNetworkConfig.swift in Sources */,
+				D7F0C2D45A8B4E2C9F2A1B3C /* ViewController.swift in Sources */,
 				0423DEA22ED724F3009DDC89 /* ContentView.swift in Sources */,
 				0423DEA32ED724F3009DDC89 /* GLMAgentApp.swift in Sources */,
 			);
@@ -346,6 +353,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				960AC908369B4CEDAB8272A5 /* RQRetryTests.swift in Sources */,
 				607FACEC1AFB9204008FA782 /* Tests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

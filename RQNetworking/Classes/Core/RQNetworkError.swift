@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Alamofire
 
 /// 网络请求错误类型枚举
 /// 统一管理所有网络相关的错误情况
@@ -73,5 +74,43 @@ extension RQNetworkError: LocalizedError {
         case .encodingFailed(let error):
             return "数据编码失败: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Alamofire 错误映射
+extension RQNetworkError {
+    public static func from(_ error: AFError) -> RQNetworkError {
+        if let underlyingError = error.underlyingError {
+            return .requestFailed(underlyingError)
+        }
+        
+        if case .responseValidationFailed(let reason) = error {
+            if case .unacceptableStatusCode(let code) = reason {
+                return .statusCode(code)
+            }
+        }
+        
+        if error.isExplicitlyCancelledError {
+            return .requestFailed(NSError(domain: "Cancelled", code: -999))
+        }
+        
+        if error.isSessionTaskError {
+            if let urlError = error.underlyingError as? URLError {
+                switch urlError.code {
+                case .timedOut:
+                    return .timeout
+                case .notConnectedToInternet:
+                    return .requestFailed(urlError)
+                case .networkConnectionLost:
+                    return .requestFailed(urlError)
+                case .cannotConnectToHost:
+                    return .requestFailed(urlError)
+                default:
+                    break
+                }
+            }
+        }
+        
+        return .requestFailed(error)
     }
 }

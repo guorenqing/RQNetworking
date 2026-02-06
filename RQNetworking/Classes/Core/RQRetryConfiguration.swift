@@ -129,7 +129,12 @@ public struct RQRetryCondition: Sendable {
     
     /// 默认重试条件
     /// 对超时、服务器错误和网络连接问题进行重试
-    public static let `default` = RQRetryCondition { error, request, response in
+    public static let `default` = RQRetryCondition { error, _, response in
+        // 优先使用 HTTP 响应码判断
+        if let response = response, (500...599).contains(response.statusCode) {
+            return true
+        }
+        
         // Token过期错误不应该重试，应该走Token刷新流程
         if case RQNetworkError.tokenExpired = error {
             return false
@@ -146,6 +151,19 @@ public struct RQRetryCondition: Sendable {
         }
         
         // 特定的URL错误应该重试
+        if case RQNetworkError.requestFailed(let underlying as URLError) = error {
+            switch underlying.code {
+            case .timedOut,                    // 超时
+                 .cannotConnectToHost,         // 无法连接到主机
+                 .networkConnectionLost,       // 网络连接丢失
+                 .notConnectedToInternet,      // 未连接到互联网
+                 .secureConnectionFailed:      // 安全连接失败
+                return true
+            default:
+                break
+            }
+        }
+        
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut,                    // 超时
@@ -174,7 +192,10 @@ public struct RQRetryCondition: Sendable {
     /// - Parameter codes: 需要重试的状态码集合
     /// - Returns: 重试条件实例
     public static func statusCodes(_ codes: Set<Int>) -> RQRetryCondition {
-        return RQRetryCondition { error, _, _ in
+        return RQRetryCondition { error, _, response in
+            if let response = response {
+                return codes.contains(response.statusCode)
+            }
             if case RQNetworkError.statusCode(let code) = error {
                 return codes.contains(code)
             }
@@ -185,6 +206,21 @@ public struct RQRetryCondition: Sendable {
     /// 网络错误重试条件
     /// 只对网络相关的错误进行重试
     public static let networkErrors = RQRetryCondition { error, _, _ in
+        if case RQNetworkError.requestFailed(let underlying as URLError) = error {
+            switch underlying.code {
+            case .timedOut,
+                 .cannotConnectToHost,
+                 .networkConnectionLost,
+                 .notConnectedToInternet,
+                 .dnsLookupFailed,
+                 .cannotFindHost,
+                 .secureConnectionFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut,

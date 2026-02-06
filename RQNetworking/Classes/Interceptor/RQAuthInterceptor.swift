@@ -33,6 +33,23 @@ public final class RQAuthInterceptor: @unchecked Sendable, RequestInterceptor {
         completion: @escaping (Result<URLRequest, Error>) -> Void
     ) {
         var adaptedRequest = urlRequest
+
+        let requiresCommonHeadersValue = adaptedRequest.headers.value(
+            for: RQNetworkManager.requiresCommonHeadersHeaderKey
+        )
+        adaptedRequest.headers.remove(name: RQNetworkManager.requiresCommonHeadersHeaderKey)
+
+        let requiresCommonHeaders: Bool
+        if let value = requiresCommonHeadersValue?.lowercased() {
+            requiresCommonHeaders = !(value == "0" || value == "false")
+        } else {
+            requiresCommonHeaders = true
+        }
+
+        guard requiresCommonHeaders else {
+            completion(.success(adaptedRequest))
+            return
+        }
         
         // 添加公共头
         var headers = adaptedRequest.headers
@@ -58,4 +75,3 @@ public final class RQAuthInterceptor: @unchecked Sendable, RequestInterceptor {
         completion(.doNotRetry)
     }
 }
-

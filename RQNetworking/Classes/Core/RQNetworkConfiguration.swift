@@ -28,6 +28,14 @@ public struct RQNetworkConfiguration {
     
     /// 默认超时时间（秒）
     public let defaultTimeoutInterval: TimeInterval
+
+    /// 默认JSON解码器
+    /// 用于响应解码的默认策略
+    public let jsonDecoder: JSONDecoder
+
+    /// 默认JSON编码器
+    /// 用于请求参数编码的默认策略
+    public let jsonEncoder: JSONEncoder
     
     /// 公共头提供者回调
     /// 使用回调而不是固定字典，因为头信息可能是动态的（如认证Token）
@@ -45,6 +53,8 @@ public struct RQNetworkConfiguration {
     ///   - requestInterceptors: 请求拦截器数组，默认为空
     ///   - responseInterceptors: 响应拦截器数组，默认为空
     ///   - defaultTimeoutInterval: 默认超时时间，默认为60秒
+    ///   - jsonDecoder: 默认JSON解码器，默认为JSONDecoder()
+    ///   - jsonEncoder: 默认JSON编码器，默认为JSONEncoder()
     ///   - commonHeadersProvider: 公共头提供者回调，默认为nil
     ///   - commonParametersProvider: 公共参数提供者回调，默认为nil
     public init(
@@ -52,6 +62,8 @@ public struct RQNetworkConfiguration {
         requestInterceptors: [RequestInterceptor] = [],
         responseInterceptors: [RQResponseInterceptor] = [],
         defaultTimeoutInterval: TimeInterval = 60.0,
+        jsonDecoder: JSONDecoder = JSONDecoder(),
+        jsonEncoder: JSONEncoder = JSONEncoder(),
         commonHeadersProvider: (@Sendable () -> HTTPHeaders)? = nil,
         commonParametersProvider: (@Sendable () -> Codable?)? = nil
     ) {
@@ -59,6 +71,8 @@ public struct RQNetworkConfiguration {
         self.requestInterceptors = requestInterceptors
         self.responseInterceptors = responseInterceptors
         self.defaultTimeoutInterval = defaultTimeoutInterval
+        self.jsonDecoder = jsonDecoder
+        self.jsonEncoder = jsonEncoder
         self.commonHeadersProvider = commonHeadersProvider
         self.commonParametersProvider = commonParametersProvider
     }
@@ -77,6 +91,8 @@ extension RQNetworkConfiguration {
         private var requestInterceptors: [RequestInterceptor] = []
         private var responseInterceptors: [RQResponseInterceptor] = []
         private var defaultTimeoutInterval: TimeInterval = 60.0
+        private var jsonDecoder: JSONDecoder = JSONDecoder()
+        private var jsonEncoder: JSONEncoder = JSONEncoder()
         private var commonHeadersProvider: (@Sendable () -> HTTPHeaders)?
         private var commonParametersProvider: (@Sendable () -> Codable?)?
         
@@ -118,6 +134,24 @@ extension RQNetworkConfiguration {
         @discardableResult
         public mutating func setTimeoutInterval(_ interval: TimeInterval) -> Self {
             self.defaultTimeoutInterval = interval
+            return self
+        }
+
+        /// 设置默认JSON解码器
+        /// - Parameter decoder: JSON解码器
+        /// - Returns: 构建器自身，支持链式调用
+        @discardableResult
+        public mutating func setJSONDecoder(_ decoder: JSONDecoder) -> Self {
+            self.jsonDecoder = decoder
+            return self
+        }
+
+        /// 设置默认JSON编码器
+        /// - Parameter encoder: JSON编码器
+        /// - Returns: 构建器自身，支持链式调用
+        @discardableResult
+        public mutating func setJSONEncoder(_ encoder: JSONEncoder) -> Self {
+            self.jsonEncoder = encoder
             return self
         }
         
@@ -165,6 +199,8 @@ extension RQNetworkConfiguration {
                 requestInterceptors: requestInterceptors,
                 responseInterceptors: responseInterceptors,
                 defaultTimeoutInterval: defaultTimeoutInterval,
+                jsonDecoder: jsonDecoder,
+                jsonEncoder: jsonEncoder,
                 commonHeadersProvider: commonHeadersProvider,
                 commonParametersProvider: commonParametersProvider
             )

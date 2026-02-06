@@ -10,6 +10,7 @@ import SwiftUI
 @main
 struct GLMAgentApp: App {
     init() {
+        AppNetworkConfig.setupNetwork()
         print("app 初始化")
     }
     var body: some Scene {

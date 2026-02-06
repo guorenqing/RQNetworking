@@ -41,6 +41,10 @@ public final class RQTokenExpiredInterceptor: RQResponseInterceptor {
         error: Error?,
         for request: RQNetworkRequest
     ) async -> RQInterceptResult {
+
+        guard request.requiresCommonHeaders else {
+            return .proceed
+        }
         
         // 如果有网络错误，直接继续处理（让重试拦截器处理）
         if error != nil {
@@ -74,4 +78,3 @@ public final class RQTokenExpiredInterceptor: RQResponseInterceptor {
         }
     }
 }
-

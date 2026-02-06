@@ -10,12 +10,15 @@ import Alamofire
 
 /// 重试拦截器
 /// 处理网络请求的重试逻辑
-public final class RQRetryInterceptor: RequestInterceptor {
+public final class RQRetryInterceptor: RequestInterceptor, @unchecked Sendable {
     
     // MARK: - 属性
     
     /// 默认重试配置
     public let defaultRetryConfiguration: RQRetryConfiguration
+    
+    /// 请求级重试配置提供者
+    public var retryConfigurationProvider: (@Sendable (Request) -> RQRetryConfiguration?)?
     
     
     // MARK: - 初始化方法
@@ -48,8 +51,15 @@ public final class RQRetryInterceptor: RequestInterceptor {
             return
         }
         
-        // 获取重试配置
-        let retryConfig = defaultRetryConfiguration
+        // 获取重试配置（优先请求级配置）
+        let retryConfig = retryConfigurationProvider?(request) ?? defaultRetryConfiguration
+        let response = request.response
+        let mappedError: Error
+        if let afError = error as? AFError {
+            mappedError = RQNetworkError.from(afError)
+        } else {
+            mappedError = error
+        }
         
         // 检查当前重试次数
         let retryCount = request.retryCount
@@ -61,8 +71,9 @@ public final class RQRetryInterceptor: RequestInterceptor {
         
         // 检查是否应该重试
         guard shouldRetry(
-            error: error,
+            error: mappedError,
             request: originalRequest,
+            response: response,
             retryCount: retryCount,
             configuration: retryConfig
         ) else {
@@ -84,13 +95,14 @@ public final class RQRetryInterceptor: RequestInterceptor {
     private func shouldRetry(
         error: Error,
         request: URLRequest,
+        response: HTTPURLResponse?,
         retryCount: Int,
         configuration: RQRetryConfiguration
     ) -> Bool {
         return configuration.retryCondition.shouldRetry(
             error: error,
             request: request,
-            response: nil
+            response: response
         )
     }
 }

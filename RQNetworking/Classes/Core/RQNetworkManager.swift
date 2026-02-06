@@ -46,7 +46,9 @@ public final class RQNetworkManager: @unchecked Sendable {
     /// 重置单例实例
     /// 主要用于测试环境，可以重新配置网络管理器
     public static func reset() {
-        _shared = nil
+        lock.sync(flags: .barrier) {
+            _shared = nil
+        }
     }
     
     // MARK: - 实例属性
@@ -75,6 +77,13 @@ public final class RQNetworkManager: @unchecked Sendable {
             return _responseInterceptors
         }
     }
+
+    /// 请求级重试配置缓存
+    private let retryConfigQueue = DispatchQueue(
+        label: "com.rqnetwork.retryConfig",
+        attributes: .concurrent
+    )
+    private var retryConfigByRequestID: [UUID: RQRetryConfiguration] = [:]
     
     /// 公共头提供者回调
     private let commonHeadersProvider: (@Sendable () -> HTTPHeaders)?
@@ -84,6 +93,33 @@ public final class RQNetworkManager: @unchecked Sendable {
     
     /// 默认超时时间
     private let defaultTimeoutInterval: TimeInterval
+
+    /// 默认JSON解码器
+    private let jsonDecoder: JSONDecoder
+
+    /// 默认JSON编码器
+    private let jsonEncoder: JSONEncoder
+
+    /// 内部公共头标记
+    static let requiresCommonHeadersHeaderKey = "X-RQ-Requires-Common-Headers"
+
+    private final class CancelRequestHolder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var request: Request?
+
+        func set(_ request: Request) {
+            lock.lock()
+            self.request = request
+            lock.unlock()
+        }
+
+        func cancel() {
+            lock.lock()
+            let request = self.request
+            lock.unlock()
+            request?.cancel()
+        }
+    }
     
     // MARK: - 初始化方法
     
@@ -96,6 +132,8 @@ public final class RQNetworkManager: @unchecked Sendable {
         self.defaultTimeoutInterval = configuration.defaultTimeoutInterval
         self.commonHeadersProvider = configuration.commonHeadersProvider
         self.commonParametersProvider = configuration.commonParametersProvider
+        self.jsonDecoder = configuration.jsonDecoder
+        self.jsonEncoder = configuration.jsonEncoder
         
         // 创建复合拦截器来管理所有请求拦截器
         self.compositeInterceptor = RQCompositeRequestInterceptor(interceptors: requestInterceptors)
@@ -111,6 +149,9 @@ public final class RQNetworkManager: @unchecked Sendable {
         
         // 设置认证拦截器的公共头提供者
         setupAuthInterceptor()
+
+        // 设置重试拦截器的请求级配置读取
+        setupRetryInterceptor()
         
         print("✅ [RQNetworkManager] 初始化完成")
     }
@@ -125,20 +166,49 @@ public final class RQNetworkManager: @unchecked Sendable {
             break // 只设置第一个找到的认证拦截器
         }
     }
+
+    /// 设置重试拦截器的请求级配置读取
+    private func setupRetryInterceptor() {
+        for case let interceptor as RQRetryInterceptor in requestInterceptors {
+            interceptor.retryConfigurationProvider = { [weak self] request in
+                return self?.retryConfiguration(for: request)
+            }
+            break
+        }
+    }
+
+    private func registerRetryConfiguration(_ config: RQRetryConfiguration?, for request: Request) {
+        guard let config else { return }
+        _ = retryConfigQueue.sync(flags: .barrier) { [weak self] in
+            self?.retryConfigByRequestID[request.id] = config
+        }
+    }
+
+    private func retryConfiguration(for request: Request) -> RQRetryConfiguration? {
+        return retryConfigQueue.sync {
+            return retryConfigByRequestID[request.id]
+        }
+    }
+
+    private func removeRetryConfiguration(for request: Request) {
+        _ = retryConfigQueue.sync(flags: .barrier) { [weak self] in
+            self?.retryConfigByRequestID.removeValue(forKey: request.id)
+        }
+    }
     
     // MARK: - 拦截器管理
     
     /// 添加请求拦截器
     /// - Parameter interceptor: 要添加的请求拦截器
     public func addRequestInterceptor(_ interceptor: RequestInterceptor) {
-        compositeInterceptor.interceptors.append(interceptor)
+        compositeInterceptor.addInterceptor(interceptor)
         print("➕ [RQNetworkManager] 添加请求拦截器: \(type(of: interceptor))")
     }
     
     /// 添加响应拦截器
     /// - Parameter interceptor: 要添加的响应拦截器
     public func addResponseInterceptor(_ interceptor: RQResponseInterceptor) {
-        isolationQueue.async(flags: .barrier) { [weak self] in
+        isolationQueue.sync(flags: .barrier) { [weak self] in
             self?._responseInterceptors.append(interceptor)
             print("➕ [RQNetworkManager] 添加响应拦截器: \(type(of: interceptor))")
         }
@@ -149,7 +219,7 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - interceptor: 要插入的请求拦截器
     ///   - index: 插入位置
     public func insertRequestInterceptor(_ interceptor: RequestInterceptor, at index: Int) {
-        compositeInterceptor.interceptors.insert(interceptor, at: index)
+        compositeInterceptor.insertInterceptor(interceptor, at: index)
         print("📋 [RQNetworkManager] 在位置 \(index) 插入请求拦截器: \(type(of: interceptor))")
         
     }
@@ -159,7 +229,7 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - interceptor: 要插入的响应拦截器
     ///   - index: 插入位置
     public func insertResponseInterceptor(_ interceptor: RQResponseInterceptor, at index: Int) {
-        isolationQueue.async(flags: .barrier) { [weak self] in
+        isolationQueue.sync(flags: .barrier) { [weak self] in
             self?._responseInterceptors.insert(interceptor, at: index)
             print("📋 [RQNetworkManager] 在位置 \(index) 插入响应拦截器: \(type(of: interceptor))")
         }
@@ -173,12 +243,56 @@ public final class RQNetworkManager: @unchecked Sendable {
     /// - Returns: 解码后的响应数据
     /// - Throws: 网络错误或解码错误
     @discardableResult
-    public func request<T: Decodable>(
+    public func request<T: Decodable & Sendable>(
         _ request: RQNetworkRequest
     ) async throws -> RQResponse<T> {
         let urlRequest = try buildURLRequest(from: request)
         return try await performRequestWithInterceptors(urlRequest, for: request)
     }
+    
+    /// 执行网络请求（Completion回调）
+    /// - Parameters:
+    ///   - request: 网络请求对象
+    ///   - callbackQueue: 回调队列，默认主队列
+    ///   - completion: 完成回调
+    /// - Returns: 可取消对象
+    @discardableResult
+    public func request<T: Decodable & Sendable>(
+        _ request: RQNetworkRequest,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response: RQResponse<T> = try await self.request(request)
+                callbackQueue.async { completion(.success(response)) }
+            } catch {
+                callbackQueue.async { completion(.failure(error)) }
+            }
+        }
+        return RQTaskCancelable(task: task)
+    }
+    
+
+    /// 使用构建器执行网络请求
+    @discardableResult
+    public func request<T: Decodable & Sendable>(
+        _ builder: RQRequestBuilder
+    ) async throws -> RQResponse<T> {
+        return try await request(builder.build())
+    }
+    
+    /// 使用构建器执行网络请求（Completion回调）
+    @discardableResult
+    public func request<T: Decodable & Sendable>(
+        _ builder: RQRequestBuilder,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        return request(builder.build(), callbackQueue: callbackQueue, completion: completion)
+    }
+    
     
     /// 执行文件上传请求
     /// - Parameters:
@@ -189,58 +303,134 @@ public final class RQNetworkManager: @unchecked Sendable {
     @discardableResult
     public func upload<T: Decodable & Sendable>(
         _ request: RQUploadRequest,
-        progressHandler: ((Progress) -> Void)? = nil
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> RQUploadResponse<T> {
+        return try await performUpload(
+            request,
+            progressHandler: progressHandler,
+            isRetry: false
+        )
+    }
+
+    /// 执行文件上传请求（Completion回调）
+    @discardableResult
+    public func upload<T: Decodable & Sendable>(
+        _ request: RQUploadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQUploadResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response: RQUploadResponse<T> = try await self.upload(
+                    request,
+                    progressHandler: progressHandler
+                )
+                callbackQueue.async { completion(.success(response)) }
+            } catch {
+                callbackQueue.async { completion(.failure(error)) }
+            }
+        }
+        return RQTaskCancelable(task: task)
+    }
+
+    /// 使用构建器执行文件上传请求
+    @discardableResult
+    public func upload<T: Decodable & Sendable>(
+        _ builder: RQUploadRequestBuilder,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> RQUploadResponse<T> {
+        return try await upload(builder.build(), progressHandler: progressHandler)
+    }
+
+    /// 使用构建器执行文件上传请求（Completion回调）
+    @discardableResult
+    public func upload<T: Decodable & Sendable>(
+        _ builder: RQUploadRequestBuilder,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQUploadResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        return upload(
+            builder.build(),
+            progressHandler: progressHandler,
+            callbackQueue: callbackQueue,
+            completion: completion
+        )
+    }
+
+    private func performUpload<T: Decodable & Sendable>(
+        _ request: RQUploadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        isRetry: Bool
     ) async throws -> RQUploadResponse<T> {
         let urlRequest = try buildURLRequest(from: request)
+        let decoder = resolveJSONDecoder(for: request)
+        let cancelHolder = CancelRequestHolder()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            session.upload(
-                multipartFormData: { formData in
-                    // 添加表单字段
-                    if let formFields = request.formFields {
-                        for (key, value) in formFields {
-                            if let data = value.data(using: .utf8) {
-                                formData.append(data, withName: key)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let uploadRequest = session.upload(
+                    multipartFormData: { formData in
+                        // 添加表单字段
+                        if let formFields = request.formFields {
+                            for (key, value) in formFields {
+                                if let data = value.data(using: .utf8) {
+                                    formData.append(data, withName: key)
+                                }
                             }
                         }
+                        
+                        // 添加上传数据
+                        for uploadData in request.uploadData {
+                            switch uploadData {
+                            case .data(let data, let fileName, let mimeType):
+                                formData.append(data, withName: uploadData.name, fileName: fileName, mimeType: mimeType)
+                            case .file(let fileURL, let fileName, let mimeType):
+                                formData.append(fileURL, withName: uploadData.name, fileName: fileName, mimeType: mimeType)
+                            case .stream(let stream, let fileName, let mimeType):
+                                // 使用 UInt64.max 作为安全的默认长度
+                                formData.append(
+                                    stream.createStream(),
+                                    withLength: UInt64.max,
+                                    name: uploadData.name,
+                                    fileName: fileName,
+                                    mimeType: mimeType
+                                )
+                            }
+                        }
+                    },
+                    with: urlRequest
+                )
+                cancelHolder.set(uploadRequest)
+                if Task.isCancelled {
+                    uploadRequest.cancel()
+                }
+                
+                registerRetryConfiguration(request.retryConfiguration, for: uploadRequest)
+                uploadRequest
+                    .uploadProgress { progress in
+                        progressHandler?(progress)
                     }
-                    
-                    // 添加上传数据
-                    for uploadData in request.uploadData {
-                        switch uploadData {
-                        case .data(let data, let fileName, let mimeType):
-                            formData.append(data, withName: uploadData.name, fileName: fileName, mimeType: mimeType)
-                        case .file(let fileURL, let fileName, let mimeType):
-                            formData.append(fileURL, withName: uploadData.name, fileName: fileName, mimeType: mimeType)
-                        case .stream(let stream, let fileName, let mimeType):
-                            // 使用 UInt64.max 作为安全的默认长度
-                            formData.append(
-                                stream.createStream(),
-                                withLength: UInt64.max,
-                                name: uploadData.name,
-                                fileName: fileName,
-                                mimeType: mimeType
+                    .validate()
+                    .responseDecodable(of: T.self, decoder: decoder) { [weak self] response in
+                        guard let self = self else { return }
+                        self.removeRetryConfiguration(for: uploadRequest)
+                        
+                        Task {
+                            await self.handleUploadResponse(
+                                response: response,
+                                request: request,
+                                progressHandler: progressHandler,
+                                continuation: continuation,
+                                isRetry: isRetry
                             )
                         }
                     }
-                },
-                with: urlRequest
-            )
-            .uploadProgress { progress in
-                progressHandler?(progress)
             }
-            .validate()
-            .responseDecodable(of: T.self) { [weak self] response in
-                guard let self = self else { return }
-                
-                Task {
-                    await self.handleUploadResponse(
-                        response: response,
-                        request: request,
-                        continuation: continuation
-                    )
-                }
-            }
+        } onCancel: {
+            cancelHolder.cancel()
         }
     }
     
@@ -252,7 +442,66 @@ public final class RQNetworkManager: @unchecked Sendable {
     /// - Throws: 网络错误
     public func download(
         _ request: RQDownloadRequest,
-        progressHandler: ((Progress) -> Void)? = nil
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> RQDownloadResponse {
+        return try await performDownload(
+            request,
+            progressHandler: progressHandler,
+            isRetry: false
+        )
+    }
+
+    /// 执行文件下载请求（Completion回调）
+    @discardableResult
+    public func download(
+        _ request: RQDownloadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQDownloadResponse, Error>) -> Void
+    ) -> RQCancelable {
+        let task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await self.download(
+                    request,
+                    progressHandler: progressHandler
+                )
+                callbackQueue.async { completion(.success(response)) }
+            } catch {
+                callbackQueue.async { completion(.failure(error)) }
+            }
+        }
+        return RQTaskCancelable(task: task)
+    }
+
+    /// 使用构建器执行文件下载请求
+    public func download(
+        _ builder: RQDownloadRequestBuilder,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> RQDownloadResponse {
+        return try await download(builder.build(), progressHandler: progressHandler)
+    }
+
+    /// 使用构建器执行文件下载请求（Completion回调）
+    @discardableResult
+    public func download(
+        _ builder: RQDownloadRequestBuilder,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQDownloadResponse, Error>) -> Void
+    ) -> RQCancelable {
+        return download(
+            builder.build(),
+            progressHandler: progressHandler,
+            callbackQueue: callbackQueue,
+            completion: completion
+        )
+    }
+
+    private func performDownload(
+        _ request: RQDownloadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        isRetry: Bool
     ) async throws -> RQDownloadResponse {
         let urlRequest = try buildURLRequest(from: request)
         let destinationURL = request.destination.makeURL()
@@ -260,24 +509,40 @@ public final class RQNetworkManager: @unchecked Sendable {
         let destination: DownloadRequest.Destination = { _, _ in
             return (destinationURL, [.removePreviousFile, .createIntermediateDirectories])
         }
+        let cancelHolder = CancelRequestHolder()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            session.download(urlRequest, to: destination)
-                .downloadProgress { progress in
-                    progressHandler?(progress)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let downloadRequest = session.download(urlRequest, to: destination)
+                cancelHolder.set(downloadRequest)
+                if Task.isCancelled {
+                    downloadRequest.cancel()
                 }
-                .validate()
-                .response { [weak self] response in
-                    guard let self = self else { return }
-                    
-                    Task {
-                        await self.handleDownloadResponse(
-                            response: response,
-                            destinationURL: destinationURL,
-                            continuation: continuation
-                        )
+                
+                registerRetryConfiguration(request.retryConfiguration, for: downloadRequest)
+                downloadRequest
+                    .downloadProgress { progress in
+                        progressHandler?(progress)
                     }
-                }
+                    .validate()
+                    .response { [weak self] response in
+                        guard let self = self else { return }
+                        self.removeRetryConfiguration(for: downloadRequest)
+                        
+                        Task {
+                            await self.handleDownloadResponse(
+                                response: response,
+                                request: request,
+                                destinationURL: destinationURL,
+                                progressHandler: progressHandler,
+                                continuation: continuation,
+                                isRetry: isRetry
+                            )
+                        }
+                    }
+            }
+        } onCancel: {
+            cancelHolder.cancel()
         }
     }
     
@@ -306,103 +571,97 @@ public final class RQNetworkManager: @unchecked Sendable {
         if let requestHeaders = request.headers {
             urlRequest.headers = requestHeaders
         }
+
+        urlRequest.headers.update(
+            name: RQNetworkManager.requiresCommonHeadersHeaderKey,
+            value: request.requiresCommonHeaders ? "1" : "0"
+        )
         
         // 合并请求参数和公共参数
+        let encoder = resolveJSONEncoder(for: request)
         let mergedParameters = try mergeParameters(
             requestParameters: request.requestParameters,
-            commonParameters: commonParametersProvider?()
+            commonParameters: commonParametersProvider?(),
+            encoder: encoder
         )
         
         // 使用请求的编码器编码合并后的参数
         if let parameters = mergedParameters {
-            urlRequest = try request.requestEncoder.encode(parameters, into: urlRequest)
+            let parameterEncoder = resolveParameterEncoder(for: request, jsonEncoder: encoder)
+            urlRequest = try parameterEncoder.encode(parameters, into: urlRequest)
         }
         
         return urlRequest
     }
     
-    /// 合并请求参数和公共参数
-    /// - Parameters:
-    ///   - requestParameters: 请求特定参数
-    ///   - commonParameters: 公共参数
-    /// - Returns: 合并后的参数
-    /// - Throws: 参数编码错误
-    private func mergeParameters2222<T: Sendable & Codable>(
-        requestParameters: T?,
-        commonParameters: T?
-    ) throws -> T? {
-        // 如果都没有参数，返回nil
-        guard let commonParams = commonParameters else {
-            return requestParameters
-        }
-        
-        guard let requestParams = requestParameters else {
-            return commonParameters
-        }
-        
-        // 将两个参数编码为字典
-        let commonDict = try encodeToDictionary(commonParams)
-        let requestDict = try encodeToDictionary(requestParams)
-        
-        // 合并字典（请求参数优先）
-        let mergedDict = commonDict.merging(requestDict) { _, new in new }
-        
-        // 将合并后的字典解码回类型 T
-        return try decodeFromDictionary(mergedDict, as: T.self)
-    }
-    
-    // 辅助方法：将字典解码为指定类型
-    private func decodeFromDictionary<T: Decodable>(_ dictionary: [String: Any], as type: T.Type) throws -> T {
-        let data = try JSONSerialization.data(withJSONObject: dictionary, options: [])
-        let decoder = JSONDecoder()
-        return try decoder.decode(type, from: data)
-    }
-    
-    /// 将Encodable对象编码为字典
-    /// - Parameter encodable: 要编码的对象
-    /// - Returns: 编码后的字典
-    /// - Throws: JSON编码错误
-    private func encodeToDictionary(_ encodable: Encodable) throws -> [String: Any] {
-        let data = try JSONEncoder().encode(encodable)
-        guard let dictionary = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw RQNetworkError.encodingFailed(NSError(domain: "Encoding failed", code: -1))
-        }
-        return dictionary
-    }
-    
     private func mergeParameters(
         requestParameters: (any Sendable & Codable)?,
-        commonParameters: (any Codable)?
+        commonParameters: (any Codable)?,
+        encoder: JSONEncoder
     ) throws -> (any Sendable & Codable)? {
-        // 编码为字典
-        let commonDict = try commonParameters.flatMap(encodeToDictionary) ?? [:]
-        let requestDict = try requestParameters.flatMap(encodeToDictionary) ?? [:]
+        let commonValue = try commonParameters.map { try encodeToJSONValue($0, encoder: encoder) }
+        let requestValue = try requestParameters.map { try encodeToJSONValue($0, encoder: encoder) }
         
-        // 如果两个都为空，返回nil
-        if commonDict.isEmpty && requestDict.isEmpty {
+        switch (commonValue, requestValue) {
+        case (nil, nil):
             return nil
+        case (nil, let request?):
+            return unwrapJSONValue(request)
+        case (let common?, nil):
+            return unwrapJSONValue(common)
+        case (let common?, let request?):
+            if case .object(let commonObject) = common, case .object(let requestObject) = request {
+                return mergeJSONObjects(commonObject, requestObject)
+            }
+            // 非对象类型无法合并时，请求参数优先
+            return unwrapJSONValue(request)
         }
-        
-        // 合并字典（请求参数优先）
-        let mergedDict = commonDict.merging(requestDict) { _, new in new }
-        
-        // 返回 [String: String]，它符合 Sendable & Codable
-        let stringParameters = mergedDict.mapValues { value in
-            switch value {
-            case let string as String:
-                return string
-            case let int as Int:
-                return "\(int)"
-            case let double as Double:
-                return "\(double)"
-            case let bool as Bool:
-                return "\(bool)"
-            default:
-                return "\(value)"
+    }
+
+    private func unwrapJSONValue(_ value: RQJSONValue) -> (any Sendable & Codable) {
+        if case .object(let object) = value {
+            return object
+        }
+        return value
+    }
+
+    private func mergeJSONObjects(
+        _ base: [String: RQJSONValue],
+        _ override: [String: RQJSONValue]
+    ) -> [String: RQJSONValue] {
+        var result = base
+        for (key, value) in override {
+            if case .object(let baseObject) = result[key],
+               case .object(let overrideObject) = value {
+                result[key] = .object(mergeJSONObjects(baseObject, overrideObject))
+            } else {
+                result[key] = value
             }
         }
-        
-        return stringParameters
+        return result
+    }
+
+    private func encodeToJSONValue(_ encodable: Encodable, encoder: JSONEncoder) throws -> RQJSONValue {
+        let data = try encoder.encode(encodable)
+        return try JSONDecoder().decode(RQJSONValue.self, from: data)
+    }
+
+    private func resolveJSONDecoder(for request: RQNetworkRequest) -> JSONDecoder {
+        return request.jsonDecoder ?? jsonDecoder
+    }
+
+    private func resolveJSONEncoder(for request: RQNetworkRequest) -> JSONEncoder {
+        return request.jsonEncoder ?? jsonEncoder
+    }
+
+    private func resolveParameterEncoder(
+        for request: RQNetworkRequest,
+        jsonEncoder: JSONEncoder
+    ) -> ParameterEncoder {
+        if request.requestEncoder is JSONParameterEncoder {
+            return JSONParameterEncoder(encoder: jsonEncoder)
+        }
+        return request.requestEncoder
     }
     
     /// 执行带拦截器的网络请求
@@ -411,27 +670,40 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - request: 网络请求协议对象
     ///   - isRetry: 是否是重试请求
     /// - Returns: 解码后的响应数据
-    private func performRequestWithInterceptors<T: Decodable>(
+    private func performRequestWithInterceptors<T: Decodable & Sendable>(
         _ urlRequest: URLRequest,
         for request: RQNetworkRequest,
         isRetry: Bool = false
     ) async throws -> RQResponse<T> {
+        let cancelHolder = CancelRequestHolder()
         
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(urlRequest)
-                .validate()
-                .responseData { [weak self] response in
-                    guard let self = self else { return }
-                    
-                    Task {
-                        await self.handleResponseWithInterceptors(
-                            response: response,
-                            request: request,
-                            continuation: continuation,
-                            isRetry: isRetry
-                        )
-                    }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let dataRequest = session.request(urlRequest)
+                cancelHolder.set(dataRequest)
+                if Task.isCancelled {
+                    dataRequest.cancel()
                 }
+                
+                registerRetryConfiguration(request.retryConfiguration, for: dataRequest)
+                dataRequest
+                    .validate()
+                    .responseData { [weak self] response in
+                        guard let self = self else { return }
+                        self.removeRetryConfiguration(for: dataRequest)
+                        
+                        Task {
+                            await self.handleResponseWithInterceptors(
+                                response: response,
+                                request: request,
+                                continuation: continuation,
+                                isRetry: isRetry
+                            )
+                        }
+                    }
+            }
+        } onCancel: {
+            cancelHolder.cancel()
         }
     }
     
@@ -441,7 +713,7 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - request: 原始请求对象
     ///   - continuation: 异步续体
     ///   - isRetry: 是否是重试请求
-    private func handleResponseWithInterceptors<T: Decodable>(
+    private func handleResponseWithInterceptors<T: Decodable & Sendable>(
         response: AFDataResponse<Data>,
         request: RQNetworkRequest,
         continuation: CheckedContinuation<RQResponse<T>, Error>,
@@ -487,6 +759,7 @@ public final class RQNetworkManager: @unchecked Sendable {
         // 正常处理响应
         await handleNormalResponse(
             response: response,
+            request: request,
             continuation: continuation
         )
     }
@@ -494,20 +767,23 @@ public final class RQNetworkManager: @unchecked Sendable {
     /// 处理正常响应（无拦截器干预）
     /// - Parameters:
     ///   - response: Alamofire响应对象
+    ///   - request: 原始请求对象
     ///   - continuation: 异步续体
-    private func handleNormalResponse<T: Decodable>(
+    private func handleNormalResponse<T: Decodable & Sendable>(
         response: AFDataResponse<Data>,
+        request: RQNetworkRequest,
         continuation: CheckedContinuation<RQResponse<T>, Error>
     ) async {
         switch response.result {
         case .success(let data):
             do {
-                let decoded = try JSONDecoder().decode(T.self, from: data)
+                let decoder = resolveJSONDecoder(for: request)
+                let decoded = try decoder.decode(T.self, from: data)
                 let rqResponse = RQResponse(
                     data: decoded,
                     statusCode: response.response?.statusCode ?? 0,
-                    headers: response.response?.allHeaderFields ?? [:],
-                    metrics: response.metrics
+                    headers: mapHeaderFields(response.response?.allHeaderFields),
+                    metrics: mapMetrics(response.metrics)
                 )
                 continuation.resume(returning: rqResponse)
             } catch {
@@ -527,7 +803,9 @@ public final class RQNetworkManager: @unchecked Sendable {
     private func handleUploadResponse<T: Decodable & Sendable>(
         response: AFDataResponse<T>,
         request: RQUploadRequest,
-        continuation: CheckedContinuation<RQUploadResponse<T>, Error>
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        continuation: CheckedContinuation<RQUploadResponse<T>, Error>,
+        isRetry: Bool
     ) async {
         
         // 执行响应拦截器
@@ -541,6 +819,9 @@ public final class RQNetworkManager: @unchecked Sendable {
             
             switch result {
             case .retry(let delay):
+                if isRetry {
+                    continue
+                }
                 // 等待指定延迟后重试
                 if delay > 0 {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
@@ -548,6 +829,7 @@ public final class RQNetworkManager: @unchecked Sendable {
                 
                 self.handleUploadRetry(
                     request: request,
+                    progressHandler: progressHandler,
                     originalData: response.data,
                     interceptor: interceptor,
                     continuation: continuation
@@ -569,8 +851,8 @@ public final class RQNetworkManager: @unchecked Sendable {
             let rqResponse = RQResponse(
                 data: data,
                 statusCode: response.response?.statusCode ?? 0,
-                headers: response.response?.allHeaderFields ?? [:],
-                metrics: response.metrics
+                headers: mapHeaderFields(response.response?.allHeaderFields),
+                metrics: mapMetrics(response.metrics)
             )
             
             let uploadResponse = RQUploadResponse(
@@ -591,27 +873,61 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - continuation: 异步续体
     private func handleDownloadResponse(
         response: AFDownloadResponse<URL?>,
+        request: RQDownloadRequest,
         destinationURL: URL,
-        continuation: CheckedContinuation<RQDownloadResponse, Error>
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        continuation: CheckedContinuation<RQDownloadResponse, Error>,
+        isRetry: Bool
     ) async {
-        
-        switch response.result {
-            case .success(let url):
-                // 处理可选的 URL
-                guard let fileURL = url else {
-                    continuation.resume(throwing: RQNetworkError.invalidResponse("下载文件URL为空"))
-                    return
+
+        for interceptor in responseInterceptors {
+            let result = await interceptor.intercept(
+                data: nil,
+                response: response.response,
+                error: response.error,
+                for: request
+            )
+
+            switch result {
+            case .retry(let delay):
+                if isRetry {
+                    continue
                 }
-                
-                let downloadResponse = RQDownloadResponse(
-                    localURL: fileURL,  // 使用实际的下载文件URL
-                    response: response.response
+
+                if delay > 0 {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+
+                self.handleDownloadRetry(
+                    request: request,
+                    progressHandler: progressHandler,
+                    originalData: nil,
+                    interceptor: interceptor,
+                    continuation: continuation
                 )
-                continuation.resume(returning: downloadResponse)
-                
-            case .failure(let error):
-                continuation.resume(throwing: self.mapError(error))
+                return
+
+            case .fail(let error):
+                continuation.resume(throwing: error)
+                return
+
+            case .proceed:
+                continue
             }
+        }
+
+        switch response.result {
+        case .success(let url):
+            let fileURL = url ?? destinationURL
+            let downloadResponse = RQDownloadResponse(
+                localURL: fileURL,
+                response: mapHTTPResponse(response.response)
+            )
+            continuation.resume(returning: downloadResponse)
+
+        case .failure(let error):
+            continuation.resume(throwing: self.mapError(error))
+        }
     }
     
     /// 处理重试逻辑
@@ -621,7 +937,7 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - originalResponse: 原始响应对象
     ///   - interceptor: 触发重试的拦截器
     ///   - continuation: 异步续体
-    private func handleRetry<T: Decodable>(
+    private func handleRetry<T: Decodable & Sendable>(
         request: RQNetworkRequest,
         originalData: Data?,
         originalResponse: URLResponse?,
@@ -660,6 +976,7 @@ public final class RQNetworkManager: @unchecked Sendable {
     ///   - continuation: 异步续体
     private func handleUploadRetry<T: Decodable & Sendable>(
         request: RQUploadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)?,
         originalData: Data?,
         interceptor: RQResponseInterceptor,
         continuation: CheckedContinuation<RQUploadResponse<T>, Error>
@@ -670,7 +987,11 @@ public final class RQNetworkManager: @unchecked Sendable {
                 // 重试原始上传请求
                 Task {
                     do {
-                        let response:RQUploadResponse<T> = try await self.upload(request)
+                        let response: RQUploadResponse<T> = try await self.performUpload(
+                            request,
+                            progressHandler: progressHandler,
+                            isRetry: true
+                        )
                         continuation.resume(returning: response)
                     } catch {
                         continuation.resume(throwing: error)
@@ -682,43 +1003,80 @@ public final class RQNetworkManager: @unchecked Sendable {
             }
         }
     }
+
+    /// 处理下载重试逻辑
+    /// - Parameters:
+    ///   - request: 下载请求对象
+    ///   - originalData: 原始响应数据
+    ///   - interceptor: 触发重试的拦截器
+    ///   - continuation: 异步续体
+    private func handleDownloadRetry(
+        request: RQDownloadRequest,
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        originalData: Data?,
+        interceptor: RQResponseInterceptor,
+        continuation: CheckedContinuation<RQDownloadResponse, Error>
+    ) {
+        interceptor.handleRetry(request, originalData: originalData) { result in
+            switch result {
+            case .success:
+                Task {
+                    do {
+                        let response = try await self.performDownload(
+                            request,
+                            progressHandler: progressHandler,
+                            isRetry: true
+                        )
+                        continuation.resume(returning: response)
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+
+            case .failure(let error):
+                continuation.resume(throwing: error)
+            }
+        }
+    }
     
     /// 映射Alamofire错误到RQNetworkError
     /// - Parameter error: Alamofire错误
     /// - Returns: RQNetworkError错误
     private func mapError(_ error: AFError) -> RQNetworkError {
-        if let underlyingError = error.underlyingError {
-            return .requestFailed(underlyingError)
+        return RQNetworkError.from(error)
+    }
+
+    /// 将响应头转换为可Sendable的字典
+    private func mapHeaderFields(_ headerFields: [AnyHashable: Any]?) -> [String: String] {
+        guard let headerFields else { return [:] }
+        var headers: [String: String] = [:]
+        headers.reserveCapacity(headerFields.count)
+        for (key, value) in headerFields {
+            let name = String(describing: key)
+            let stringValue = String(describing: value)
+            headers[name] = stringValue
         }
-        
-        if case .responseValidationFailed(let reason) = error {
-            if case .unacceptableStatusCode(let code) = reason {
-                return .statusCode(code)
-            }
-        }
-        
-        if error.isExplicitlyCancelledError {
-            return .requestFailed(NSError(domain: "Cancelled", code: -999))
-        }
-        
-        if error.isSessionTaskError {
-            if let urlError = error.underlyingError as? URLError {
-                switch urlError.code {
-                case .timedOut:
-                    return .timeout
-                case .notConnectedToInternet:
-                    return .requestFailed(urlError)
-                case .networkConnectionLost:
-                    return .requestFailed(urlError)
-                case .cannotConnectToHost:
-                    return .requestFailed(urlError)
-                default:
-                    break
-                }
-            }
-        }
-        
-        return .requestFailed(error)
+        return headers
+    }
+
+    /// 将URLSessionTaskMetrics转换为可Sendable的快照
+    private func mapMetrics(_ metrics: URLSessionTaskMetrics?) -> RQResponseMetrics? {
+        guard let metrics else { return nil }
+        return RQResponseMetrics(
+            duration: metrics.taskInterval.duration,
+            redirectCount: metrics.redirectCount,
+            transactionCount: metrics.transactionMetrics.count
+        )
+    }
+
+    /// 将HTTPURLResponse转换为可Sendable的快照
+    private func mapHTTPResponse(_ response: HTTPURLResponse?) -> RQHTTPResponse? {
+        guard let response else { return nil }
+        return RQHTTPResponse(
+            url: response.url,
+            statusCode: response.statusCode,
+            headers: mapHeaderFields(response.allHeaderFields)
+        )
     }
 }
 
@@ -733,8 +1091,8 @@ extension RQNetworkManager {
     ///   - parameters: 查询参数
     /// - Returns: 解码后的响应数据
     @discardableResult
-    public func get<T: Decodable>(
-        domainKey: String,
+    public func get<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
         path: String,
         parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
@@ -747,6 +1105,23 @@ extension RQNetworkManager {
         
         return try await self.request(request)
     }
+
+    /// 快速执行GET请求（Completion回调）
+    @discardableResult
+    public func get<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
+        path: String,
+        parameters: (Codable & Sendable)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let builder = RQRequestBuilder()
+            .setDomainKey(domainKey)
+            .setPath(path)
+            .setMethod(.get)
+            .setRequestParameters(parameters)
+        return request(builder, callbackQueue: callbackQueue, completion: completion)
+    }
     
     /// 快速执行POST请求
     /// - Parameters:
@@ -755,8 +1130,8 @@ extension RQNetworkManager {
     ///   - parameters: 请求体参数
     /// - Returns: 解码后的响应数据
     @discardableResult
-    public func post<T: Decodable>(
-        domainKey: String,
+    public func post<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
         path: String,
         parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
@@ -769,6 +1144,23 @@ extension RQNetworkManager {
         
         return try await self.request(request)
     }
+
+    /// 快速执行POST请求（Completion回调）
+    @discardableResult
+    public func post<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
+        path: String,
+        parameters: (Codable & Sendable)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let builder = RQRequestBuilder()
+            .setDomainKey(domainKey)
+            .setPath(path)
+            .setMethod(.post)
+            .setRequestParameters(parameters)
+        return request(builder, callbackQueue: callbackQueue, completion: completion)
+    }
     
     /// 快速执行PUT请求
     /// - Parameters:
@@ -777,8 +1169,8 @@ extension RQNetworkManager {
     ///   - parameters: 请求体参数
     /// - Returns: 解码后的响应数据
     @discardableResult
-    public func put<T: Decodable>(
-        domainKey: String,
+    public func put<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
         path: String,
         parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
@@ -791,6 +1183,23 @@ extension RQNetworkManager {
         
         return try await self.request(request)
     }
+
+    /// 快速执行PUT请求（Completion回调）
+    @discardableResult
+    public func put<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
+        path: String,
+        parameters: (Codable & Sendable)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let builder = RQRequestBuilder()
+            .setDomainKey(domainKey)
+            .setPath(path)
+            .setMethod(.put)
+            .setRequestParameters(parameters)
+        return request(builder, callbackQueue: callbackQueue, completion: completion)
+    }
     
     /// 快速执行DELETE请求
     /// - Parameters:
@@ -799,8 +1208,8 @@ extension RQNetworkManager {
     ///   - parameters: 查询参数
     /// - Returns: 解码后的响应数据
     @discardableResult
-    public func delete<T: Decodable>(
-        domainKey: String,
+    public func delete<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
         path: String,
         parameters: (Codable & Sendable)? = nil
     ) async throws -> RQResponse<T> {
@@ -812,5 +1221,22 @@ extension RQNetworkManager {
             .build()
         
         return try await self.request(request)
+    }
+
+    /// 快速执行DELETE请求（Completion回调）
+    @discardableResult
+    public func delete<T: Decodable & Sendable>(
+        domainKey: RQDomainKey,
+        path: String,
+        parameters: (Codable & Sendable)? = nil,
+        callbackQueue: DispatchQueue = .main,
+        completion: @escaping @Sendable (Result<RQResponse<T>, Error>) -> Void
+    ) -> RQCancelable {
+        let builder = RQRequestBuilder()
+            .setDomainKey(domainKey)
+            .setPath(path)
+            .setMethod(.delete)
+            .setRequestParameters(parameters)
+        return request(builder, callbackQueue: callbackQueue, completion: completion)
     }
 }
